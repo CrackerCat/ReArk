@@ -7,18 +7,31 @@ qt_add_executable(${PROJECT_NAME}
     core/AppInitializer.h
     core/HyleDecompiler.cpp
     core/HyleDecompiler.h
+    core/PerformanceTrace.cpp
+    core/PerformanceTrace.h
+    core/ResourcePreviewProvider.cpp
+    core/ResourcePreviewProvider.h
+    core/WindowChrome.cpp
+    core/WindowChrome.h
     controller/DecompilerController.cpp
     controller/DecompilerController.h
+    model/DocumentContent.h
     model/OpenFileTabsModel.cpp
     model/OpenFileTabsModel.h
+    model/HexDocumentModel.cpp
+    model/HexDocumentModel.h
     model/SourceTreeModel.cpp
     model/SourceTreeModel.h
     presentation/CodeTheme.cpp
     presentation/CodeTheme.h
     presentation/CodeEditorItem.cpp
     presentation/CodeEditorItem.h
+    presentation/HexViewerItem.cpp
+    presentation/HexViewerItem.h
     presentation/SyntaxHighlighter.cpp
     presentation/SyntaxHighlighter.h
+    presentation/SyntaxThemeProvider.cpp
+    presentation/SyntaxThemeProvider.h
     ${WIN32_RESOURCES}
 )
 
@@ -53,6 +66,8 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     Qt6::Qml
     Qt6::QuickControls2
     Qt6::Concurrent
+    Qt6::Multimedia
+    KF6::SyntaxHighlighting
     hyle::hyle
     reark_qml_module
     reark_qml_moduleplugin

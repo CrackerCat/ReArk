@@ -1,16 +1,21 @@
 #ifndef REARK_SOURCE_TREE_MODEL_H
 #define REARK_SOURCE_TREE_MODEL_H
 
+#include "model/DocumentContent.h"
+
 #include <QAbstractListModel>
+#include <QByteArray>
 #include <QString>
 
 #include <cstddef>
+#include <memory>
 #include <vector>
 
 struct DecompiledSourceFile {
     QString name;
     QString kind;
     QString content;
+    QByteArray binaryContent;
     QString section;
     QString contentMode = QStringLiteral("text");
     std::size_t hyleId = 0;
@@ -53,17 +58,21 @@ public:
     [[nodiscard]] std::size_t selectedHyleId() const;
     [[nodiscard]] QString selectedFileName() const;
     [[nodiscard]] QString nodeContent(int nodeIndex) const;
+    [[nodiscard]] QByteArray nodeBinaryContent(int nodeIndex) const;
     [[nodiscard]] QString nodeDiagnostics(int nodeIndex) const;
     [[nodiscard]] std::size_t nodeHyleId(int nodeIndex) const;
     [[nodiscard]] QString nodeName(int nodeIndex) const;
     [[nodiscard]] QString nodePath(int nodeIndex) const;
+    [[nodiscard]] QString nodeKind(int nodeIndex) const;
+    [[nodiscard]] std::shared_ptr<DocumentContent> nodeDocument(int nodeIndex) const;
     [[nodiscard]] QString nodeSection(int nodeIndex) const;
     [[nodiscard]] QString nodeContentMode(int nodeIndex) const;
     [[nodiscard]] bool nodeNeedsLoad(int nodeIndex) const;
+    [[nodiscard]] bool nodeEligibleForBackgroundLoad(int nodeIndex) const;
+    [[nodiscard]] std::vector<int> prioritizedPreloadNodeIndices(int centerNode, int maxCount) const;
 
     void replaceFiles(std::vector<DecompiledSourceFile> files);
-    void setNodeContent(int nodeIndex, const QString& content, const QString& diagnostics, const QString& kind, const QString& contentMode);
-    void markNodeFailed(int nodeIndex, const QString& error);
+    void setNodeContent(int nodeIndex, std::shared_ptr<DocumentContent> document);
     Q_INVOKABLE void activateIndex(int index);
 
 public slots:
@@ -81,8 +90,7 @@ private:
         QString name;
         QString path;
         QString kind;
-        QString content;
-        QString diagnostics;
+        std::shared_ptr<DocumentContent> document;
         QString section;
         QString contentMode = QStringLiteral("text");
         std::size_t hyleId = 0;
@@ -97,6 +105,9 @@ private:
 
     void rebuildTree(std::vector<DecompiledSourceFile> files);
     void rebuildVisibleRows();
+    void sortChildren();
+    void appendVisibleSubtree(int nodeIndex, std::vector<int>& rows) const;
+    [[nodiscard]] int visibleDescendantCount(int row) const;
     [[nodiscard]] int rowForNode(int nodeIndex) const;
     [[nodiscard]] int firstFileNode() const;
     [[nodiscard]] bool isNodeVisible(int nodeIndex) const;

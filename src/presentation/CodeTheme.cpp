@@ -2,7 +2,7 @@
 
 CodeTheme codeThemeForId(const QString& id, bool darkFallback)
 {
-    if (id == QStringLiteral("github-dark")) {
+    if (id == QStringLiteral("github-dark") || id == QStringLiteral("GitHub Dark")) {
         return {
             id,
             QColor(QStringLiteral("#0d1117")),
@@ -21,7 +21,7 @@ CodeTheme codeThemeForId(const QString& id, bool darkFallback)
         };
     }
 
-    if (id == QStringLiteral("github-light")) {
+    if (id == QStringLiteral("github-light") || id == QStringLiteral("GitHub Light")) {
         return {
             id,
             QColor(QStringLiteral("#ffffff")),
@@ -40,7 +40,7 @@ CodeTheme codeThemeForId(const QString& id, bool darkFallback)
         };
     }
 
-    if (id == QStringLiteral("monokai")) {
+    if (id == QStringLiteral("monokai") || id == QStringLiteral("Monokai")) {
         return {
             id,
             QColor(QStringLiteral("#272822")),
@@ -59,7 +59,7 @@ CodeTheme codeThemeForId(const QString& id, bool darkFallback)
         };
     }
 
-    if (id == QStringLiteral("darcula")) {
+    if (id == QStringLiteral("darcula") || id == QStringLiteral("Dracula")) {
         return {
             id,
             QColor(QStringLiteral("#2b2b2b")),
@@ -78,9 +78,13 @@ CodeTheme codeThemeForId(const QString& id, bool darkFallback)
         };
     }
 
-    if (!darkFallback) {
-        return codeThemeForId(QStringLiteral("github-light"), true);
+    if (id == QStringLiteral("Breeze Light") || id == QStringLiteral("Solarized Light")) {
+        return codeThemeForId(QStringLiteral("GitHub Light"), true);
     }
 
-    return codeThemeForId(QStringLiteral("github-dark"), true);
+    if (!darkFallback) {
+        return codeThemeForId(QStringLiteral("GitHub Light"), true);
+    }
+
+    return codeThemeForId(QStringLiteral("GitHub Dark"), true);
 }

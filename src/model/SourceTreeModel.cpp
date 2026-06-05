@@ -1,7 +1,10 @@
 #include "model/SourceTreeModel.h"
 
+#include "core/PerformanceTrace.h"
+
 #include <algorithm>
 #include <map>
+#include <memory>
 #include <QString>
 #include <utility>
 
@@ -10,6 +13,32 @@ namespace {
 QString sortName(const QString& name)
 {
     return name.toCaseFolded();
+}
+
+std::shared_ptr<DocumentContent> makeDocument(QString text, QByteArray binary, QString diagnostics, QString kind, QString contentMode)
+{
+    auto document = std::make_shared<DocumentContent>();
+    document->text = std::move(text);
+    document->binary = std::move(binary);
+    document->diagnostics = std::move(diagnostics);
+    document->kind = std::move(kind);
+    document->contentMode = std::move(contentMode);
+    return document;
+}
+
+QString documentText(const std::shared_ptr<DocumentContent>& document)
+{
+    return document ? document->text : QString{};
+}
+
+QByteArray documentBinary(const std::shared_ptr<DocumentContent>& document)
+{
+    return document ? document->binary : QByteArray{};
+}
+
+QString documentDiagnostics(const std::shared_ptr<DocumentContent>& document)
+{
+    return document ? document->diagnostics : QString{};
 }
 
 } // namespace
@@ -43,9 +72,9 @@ QVariant SourceTreeModel::data(const QModelIndex& index, int role) const
     case KindRole:
         return node.kind;
     case ContentRole:
-        return node.content;
+        return documentText(node.document);
     case DiagnosticsRole:
-        return node.diagnostics;
+        return documentDiagnostics(node.document);
     case DepthRole:
         return node.depth;
     case DirectoryRole:
@@ -83,10 +112,10 @@ QString SourceTreeModel::selectedContent() const
     if (node.directory) {
         return tr("// Select a source file.");
     }
-    if (node.lazy && node.content.isEmpty()) {
+    if (node.lazy && !node.document) {
         return tr("// Decompiling selected source file...");
     }
-    return node.content;
+    return documentText(node.document);
 }
 
 QString SourceTreeModel::selectedName() const
@@ -102,7 +131,7 @@ QString SourceTreeModel::diagnostics() const
     if (selectedNode_ < 0 || selectedNode_ >= static_cast<int>(nodes_.size())) {
         return {};
     }
-    return nodes_.at(static_cast<std::size_t>(selectedNode_)).diagnostics;
+    return documentDiagnostics(nodes_.at(static_cast<std::size_t>(selectedNode_)).document);
 }
 
 int SourceTreeModel::selectedIndex() const
@@ -121,7 +150,7 @@ bool SourceTreeModel::selectedNeedsLoad() const
         return false;
     }
     const auto& node = nodes_.at(static_cast<std::size_t>(selectedNode_));
-    return !node.directory && !node.placeholder && node.lazy && node.content.isEmpty();
+    return !node.directory && !node.placeholder && node.lazy && !node.document;
 }
 
 std::size_t SourceTreeModel::selectedHyleId() const
@@ -145,7 +174,15 @@ QString SourceTreeModel::nodeContent(int nodeIndex) const
     if (nodeIndex < 0 || nodeIndex >= static_cast<int>(nodes_.size())) {
         return {};
     }
-    return nodes_.at(static_cast<std::size_t>(nodeIndex)).content;
+    return documentText(nodes_.at(static_cast<std::size_t>(nodeIndex)).document);
+}
+
+QByteArray SourceTreeModel::nodeBinaryContent(int nodeIndex) const
+{
+    if (nodeIndex < 0 || nodeIndex >= static_cast<int>(nodes_.size())) {
+        return {};
+    }
+    return documentBinary(nodes_.at(static_cast<std::size_t>(nodeIndex)).document);
 }
 
 QString SourceTreeModel::nodeDiagnostics(int nodeIndex) const
@@ -153,7 +190,7 @@ QString SourceTreeModel::nodeDiagnostics(int nodeIndex) const
     if (nodeIndex < 0 || nodeIndex >= static_cast<int>(nodes_.size())) {
         return {};
     }
-    return nodes_.at(static_cast<std::size_t>(nodeIndex)).diagnostics;
+    return documentDiagnostics(nodes_.at(static_cast<std::size_t>(nodeIndex)).document);
 }
 
 std::size_t SourceTreeModel::nodeHyleId(int nodeIndex) const
@@ -180,6 +217,22 @@ QString SourceTreeModel::nodePath(int nodeIndex) const
     return nodes_.at(static_cast<std::size_t>(nodeIndex)).path;
 }
 
+QString SourceTreeModel::nodeKind(int nodeIndex) const
+{
+    if (nodeIndex < 0 || nodeIndex >= static_cast<int>(nodes_.size())) {
+        return {};
+    }
+    return nodes_.at(static_cast<std::size_t>(nodeIndex)).kind;
+}
+
+std::shared_ptr<DocumentContent> SourceTreeModel::nodeDocument(int nodeIndex) const
+{
+    if (nodeIndex < 0 || nodeIndex >= static_cast<int>(nodes_.size())) {
+        return {};
+    }
+    return nodes_.at(static_cast<std::size_t>(nodeIndex)).document;
+}
+
 QString SourceTreeModel::nodeSection(int nodeIndex) const
 {
     if (nodeIndex < 0 || nodeIndex >= static_cast<int>(nodes_.size())) {
@@ -202,7 +255,75 @@ bool SourceTreeModel::nodeNeedsLoad(int nodeIndex) const
         return false;
     }
     const auto& node = nodes_.at(static_cast<std::size_t>(nodeIndex));
-    return !node.directory && !node.placeholder && node.lazy && node.content.isEmpty();
+    return !node.directory && !node.placeholder && node.lazy && !node.document;
+}
+
+bool SourceTreeModel::nodeEligibleForBackgroundLoad(int nodeIndex) const
+{
+    if (!nodeNeedsLoad(nodeIndex)) {
+        return false;
+    }
+
+    const auto& node = nodes_.at(static_cast<std::size_t>(nodeIndex));
+    if (node.section == QStringLiteral("source")
+        || node.section == QStringLiteral("summary")
+        || node.section == QStringLiteral("signature")) {
+        return true;
+    }
+
+    return node.section == QStringLiteral("resource")
+        && node.contentMode == QStringLiteral("text");
+}
+
+std::vector<int> SourceTreeModel::prioritizedPreloadNodeIndices(int centerNode, int maxCount) const
+{
+    std::vector<int> result;
+    if (maxCount <= 0) {
+        return result;
+    }
+    result.reserve(static_cast<std::size_t>(maxCount));
+
+    const auto appendUnique = [this, &result, maxCount](int nodeIndex) {
+        if (static_cast<int>(result.size()) >= maxCount
+            || !nodeEligibleForBackgroundLoad(nodeIndex)
+            || std::ranges::find(result, nodeIndex) != result.end()) {
+            return;
+        }
+        result.push_back(nodeIndex);
+    };
+
+    appendUnique(centerNode);
+
+    const int centerRow = rowForNode(centerNode);
+    if (centerRow >= 0) {
+        constexpr int kVisibleNeighborhoodRows = 80;
+        const int firstRow = std::max(0, centerRow - kVisibleNeighborhoodRows / 2);
+        const int lastRow = std::min(
+            static_cast<int>(visibleRows_.size()) - 1,
+            centerRow + kVisibleNeighborhoodRows / 2);
+        for (int row = firstRow; row <= lastRow; ++row) {
+            appendUnique(visibleRows_.at(static_cast<std::size_t>(row)));
+        }
+    }
+
+    for (int nodeIndex = 0; nodeIndex < static_cast<int>(nodes_.size()); ++nodeIndex) {
+        if (static_cast<int>(result.size()) >= maxCount) {
+            break;
+        }
+        const auto& node = nodes_.at(static_cast<std::size_t>(nodeIndex));
+        if (node.section == QStringLiteral("source")) {
+            appendUnique(nodeIndex);
+        }
+    }
+
+    for (int nodeIndex = 0; nodeIndex < static_cast<int>(nodes_.size()); ++nodeIndex) {
+        if (static_cast<int>(result.size()) >= maxCount) {
+            break;
+        }
+        appendUnique(nodeIndex);
+    }
+
+    return result;
 }
 
 void SourceTreeModel::replaceFiles(std::vector<DecompiledSourceFile> files)
@@ -219,19 +340,18 @@ void SourceTreeModel::replaceFiles(std::vector<DecompiledSourceFile> files)
     }
 }
 
-void SourceTreeModel::setNodeContent(int nodeIndex, const QString& content, const QString& diagnostics, const QString& kind, const QString& contentMode)
+void SourceTreeModel::setNodeContent(int nodeIndex, std::shared_ptr<DocumentContent> document)
 {
     if (nodeIndex < 0 || nodeIndex >= static_cast<int>(nodes_.size())) {
         return;
     }
     auto& node = nodes_.at(static_cast<std::size_t>(nodeIndex));
-    node.content = content;
-    node.diagnostics = diagnostics;
-    if (!kind.isEmpty()) {
-        node.kind = kind;
+    node.document = std::move(document);
+    if (node.document && !node.document->kind.isEmpty()) {
+        node.kind = node.document->kind;
     }
-    if (!contentMode.isEmpty()) {
-        node.contentMode = contentMode;
+    if (node.document && !node.document->contentMode.isEmpty()) {
+        node.contentMode = node.document->contentMode;
     }
     node.lazy = false;
 
@@ -246,11 +366,6 @@ void SourceTreeModel::setNodeContent(int nodeIndex, const QString& content, cons
     }
 }
 
-void SourceTreeModel::markNodeFailed(int nodeIndex, const QString& error)
-{
-    setNodeContent(nodeIndex, error, {}, {}, QStringLiteral("text"));
-}
-
 void SourceTreeModel::activateIndex(int index)
 {
     if (index < 0 || index >= rowCount()) {
@@ -262,13 +377,42 @@ void SourceTreeModel::activateIndex(int index)
     if (node.directory) {
         const int previousRow = selectedIndex();
         const int previousNode = selectedNode_;
-        beginResetModel();
-        node.expanded = !node.expanded;
-        rebuildVisibleRows();
-        if (selectedNode_ >= 0 && !isNodeVisible(selectedNode_)) {
-            selectedNode_ = nodeIndex;
+
+        if (node.expanded) {
+            const int removeCount = visibleDescendantCount(index);
+            if (removeCount > 0) {
+                beginRemoveRows({}, index + 1, index + removeCount);
+                visibleRows_.erase(
+                    visibleRows_.begin() + index + 1,
+                    visibleRows_.begin() + index + 1 + removeCount);
+                node.expanded = false;
+                if (selectedNode_ >= 0 && !isNodeVisible(selectedNode_)) {
+                    selectedNode_ = nodeIndex;
+                }
+                endRemoveRows();
+            } else {
+                node.expanded = false;
+                emit dataChanged(this->index(index), this->index(index), { ExpandedRole });
+            }
+        } else {
+            std::vector<int> insertedRows;
+            for (int child : node.children) {
+                appendVisibleSubtree(child, insertedRows);
+            }
+            node.expanded = true;
+            if (!insertedRows.empty()) {
+                beginInsertRows({}, index + 1, index + static_cast<int>(insertedRows.size()));
+                visibleRows_.insert(
+                    visibleRows_.begin() + index + 1,
+                    insertedRows.begin(),
+                    insertedRows.end());
+                endInsertRows();
+            } else {
+                emit dataChanged(this->index(index), this->index(index), { ExpandedRole });
+            }
         }
-        endResetModel();
+
+        emit dataChanged(this->index(index), this->index(index), { ExpandedRole });
         emitSelectedChanged(previousRow, previousNode);
         return;
     }
@@ -294,6 +438,8 @@ void SourceTreeModel::setSelectedIndex(int index)
 
 void SourceTreeModel::rebuildTree(std::vector<DecompiledSourceFile> files)
 {
+    PerformanceTrace trace(QStringLiteral("SourceTreeModel::rebuildTree"));
+
     nodes_.clear();
     visibleRows_.clear();
 
@@ -350,15 +496,16 @@ void SourceTreeModel::rebuildTree(std::vector<DecompiledSourceFile> files)
     signature.parent = -1;
     if (signatureFile != files.end()) {
         signature.kind = signatureFile->kind;
-        signature.content = std::move(signatureFile->content);
         signature.contentMode = signatureFile->contentMode;
-        signature.diagnostics = QString{};
+        if (!signatureFile->content.isEmpty() || !signatureFile->binaryContent.isEmpty() || !signatureFile->lazy) {
+            signature.document = makeDocument(std::move(signatureFile->content), std::move(signatureFile->binaryContent), {}, signatureFile->kind, signatureFile->contentMode);
+        }
         signature.hyleId = signatureFile->hyleId;
         signature.lazy = signatureFile->lazy;
     } else {
         signature.kind = QStringLiteral("PLACEHOLDER");
         signature.placeholder = true;
-        signature.content = QStringLiteral("Waiting for Hyle APK signature API");
+        signature.document = makeDocument(QStringLiteral("Waiting for Hyle APK signature API"), {}, {}, signature.kind, QStringLiteral("text"));
     }
     nodes_.push_back(std::move(signature));
 
@@ -371,15 +518,16 @@ void SourceTreeModel::rebuildTree(std::vector<DecompiledSourceFile> files)
     summary.parent = -1;
     if (summaryFile != files.end()) {
         summary.kind = summaryFile->kind;
-        summary.content = std::move(summaryFile->content);
         summary.contentMode = summaryFile->contentMode;
-        summary.diagnostics = QString{};
+        if (!summaryFile->content.isEmpty() || !summaryFile->binaryContent.isEmpty() || !summaryFile->lazy) {
+            summary.document = makeDocument(std::move(summaryFile->content), std::move(summaryFile->binaryContent), {}, summaryFile->kind, summaryFile->contentMode);
+        }
         summary.hyleId = summaryFile->hyleId;
         summary.lazy = summaryFile->lazy;
     } else {
         summary.kind = QStringLiteral("PLACEHOLDER");
         summary.placeholder = true;
-        summary.content = QStringLiteral("Waiting for Hyle summary API");
+        summary.document = makeDocument(QStringLiteral("Waiting for Hyle summary API"), {}, {}, summary.kind, QStringLiteral("text"));
     }
     nodes_.push_back(std::move(summary));
 
@@ -438,8 +586,10 @@ void SourceTreeModel::rebuildTree(std::vector<DecompiledSourceFile> files)
         source.path = normalizedPath;
         source.kind = file.kind;
         source.section = file.section;
-        source.content = std::move(file.content);
         source.contentMode = file.contentMode;
+        if (!file.content.isEmpty() || !file.binaryContent.isEmpty() || !file.lazy) {
+            source.document = makeDocument(std::move(file.content), std::move(file.binaryContent), {}, file.kind, file.contentMode);
+        }
         source.hyleId = file.hyleId;
         source.lazy = file.lazy;
         source.directory = false;
@@ -477,6 +627,7 @@ void SourceTreeModel::rebuildTree(std::vector<DecompiledSourceFile> files)
         nodeIndex = node.parent;
     }
 
+    sortChildren();
     rebuildVisibleRows();
 }
 
@@ -484,6 +635,15 @@ void SourceTreeModel::rebuildVisibleRows()
 {
     visibleRows_.clear();
 
+    for (int i = 0; i < static_cast<int>(nodes_.size()); ++i) {
+        if (nodes_.at(static_cast<std::size_t>(i)).parent < 0) {
+            appendVisibleSubtree(i, visibleRows_);
+        }
+    }
+}
+
+void SourceTreeModel::sortChildren()
+{
     for (auto& node : nodes_) {
         std::ranges::sort(node.children, [this](int leftIndex, int rightIndex) {
             const auto& left = nodes_.at(static_cast<std::size_t>(leftIndex));
@@ -494,23 +654,37 @@ void SourceTreeModel::rebuildVisibleRows()
             return sortName(left.name) < sortName(right.name);
         });
     }
+}
 
-    const auto appendNode = [this](const auto& self, int nodeIndex) -> void {
-        visibleRows_.push_back(nodeIndex);
-        const auto& node = nodes_.at(static_cast<std::size_t>(nodeIndex));
-        if (!node.directory || !node.expanded) {
-            return;
-        }
-        for (int child : node.children) {
-            self(self, child);
-        }
-    };
-
-    for (int i = 0; i < static_cast<int>(nodes_.size()); ++i) {
-        if (nodes_.at(static_cast<std::size_t>(i)).parent < 0) {
-            appendNode(appendNode, i);
-        }
+void SourceTreeModel::appendVisibleSubtree(int nodeIndex, std::vector<int>& rows) const
+{
+    rows.push_back(nodeIndex);
+    const auto& node = nodes_.at(static_cast<std::size_t>(nodeIndex));
+    if (!node.directory || !node.expanded) {
+        return;
     }
+    for (int child : node.children) {
+        appendVisibleSubtree(child, rows);
+    }
+}
+
+int SourceTreeModel::visibleDescendantCount(int row) const
+{
+    if (row < 0 || row >= static_cast<int>(visibleRows_.size())) {
+        return 0;
+    }
+
+    const int nodeIndex = visibleRows_.at(static_cast<std::size_t>(row));
+    const int depth = nodes_.at(static_cast<std::size_t>(nodeIndex)).depth;
+    int count = 0;
+    for (int i = row + 1; i < static_cast<int>(visibleRows_.size()); ++i) {
+        const auto& candidate = nodes_.at(static_cast<std::size_t>(visibleRows_.at(static_cast<std::size_t>(i))));
+        if (candidate.depth <= depth) {
+            break;
+        }
+        ++count;
+    }
+    return count;
 }
 
 int SourceTreeModel::rowForNode(int nodeIndex) const

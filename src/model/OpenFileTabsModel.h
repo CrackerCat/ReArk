@@ -1,9 +1,13 @@
 #ifndef REARK_OPEN_FILE_TABS_MODEL_H
 #define REARK_OPEN_FILE_TABS_MODEL_H
 
+#include "model/DocumentContent.h"
+
 #include <QAbstractListModel>
+#include <QByteArray>
 #include <QString>
 
+#include <memory>
 #include <vector>
 
 class OpenFileTabsModel : public QAbstractListModel {
@@ -13,6 +17,8 @@ class OpenFileTabsModel : public QAbstractListModel {
     Q_PROPERTY(QString activeContentMode READ activeContentMode NOTIFY activeTabChanged)
     Q_PROPERTY(QString activeName READ activeName NOTIFY activeTabChanged)
     Q_PROPERTY(QString activePath READ activePath NOTIFY activeTabChanged)
+    Q_PROPERTY(QString activeKind READ activeKind NOTIFY activeTabChanged)
+    Q_PROPERTY(bool activeHasBinary READ activeHasBinary NOTIFY activeTabChanged)
     Q_PROPERTY(QString activeDiagnostics READ activeDiagnostics NOTIFY activeTabChanged)
     Q_PROPERTY(bool hasTabs READ hasTabs NOTIFY tabsChanged)
 
@@ -36,18 +42,24 @@ public:
 
     [[nodiscard]] int activeIndex() const;
     [[nodiscard]] QString activeContent() const;
+    [[nodiscard]] QByteArray activeBinaryContent() const;
     [[nodiscard]] QString activeContentMode() const;
     [[nodiscard]] QString activeName() const;
     [[nodiscard]] QString activePath() const;
+    [[nodiscard]] QString activeKind() const;
+    [[nodiscard]] bool activeHasBinary() const;
     [[nodiscard]] QString activeDiagnostics() const;
     [[nodiscard]] bool hasTabs() const;
 
     void clear();
-    void openOrActivate(int nodeIndex, const QString& name, const QString& path, const QString& content, const QString& contentMode, const QString& diagnostics, bool loading);
-    void updateNode(int nodeIndex, const QString& content, const QString& contentMode, const QString& diagnostics);
+    void openOrActivate(int nodeIndex, const QString& name, const QString& path, const QString& kind, std::shared_ptr<DocumentContent> document, const QString& contentMode, bool loading);
+    void updateNode(int nodeIndex, std::shared_ptr<DocumentContent> document);
     void setNodeLoading(int nodeIndex, bool loading);
 
     Q_INVOKABLE void closeTab(int index);
+    Q_INVOKABLE void closeOtherTabs(int index);
+    Q_INVOKABLE void closeTabsToLeft(int index);
+    Q_INVOKABLE void closeTabsToRight(int index);
 
 public slots:
     void setActiveIndex(int index);
@@ -62,9 +74,9 @@ private:
         int nodeIndex = -1;
         QString name;
         QString path;
-        QString content;
+        QString kind;
         QString contentMode = QStringLiteral("text");
-        QString diagnostics;
+        std::shared_ptr<DocumentContent> document;
         bool loading = false;
     };
 

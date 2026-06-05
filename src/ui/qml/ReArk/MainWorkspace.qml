@@ -8,7 +8,7 @@ Rectangle {
 
     property string fileName: ""
     property string filePath: ""
-    property string highlightTheme: "github-dark"
+    property string highlightTheme: "GitHub Dark"
     readonly property bool hasPackage: filePath.length > 0
     readonly property bool darkTheme: Material.theme === Material.Dark
     readonly property color pageColor: darkTheme ? "#171a1f" : "#f5f7f8"
@@ -18,6 +18,16 @@ Rectangle {
     readonly property color hoverColor: darkTheme ? "#2b313a" : "#e8eef0"
     readonly property color selectedColor: darkTheme ? "#33424a" : "#d6e8e7"
     readonly property color secondaryTextColor: darkTheme ? "#aab2bd" : "#5f6872"
+    readonly property string activeKind: decompilerController.tabsModel.activeKind
+    readonly property bool activeIsText: decompilerController.tabsModel.hasTabs
+                                         && decompilerController.tabsModel.activeContentMode === "text"
+    readonly property bool activeIsJson: activeIsText && root.isJsonKind(activeKind)
+    readonly property bool activeIsResourceIndex: activeIsText
+                                                  && activeKind === "RESOURCE_INDEX"
+                                                  && decompilerController.tabsModel.activeHasBinary
+    readonly property bool fileToolsVisible: activeIsJson || activeIsResourceIndex
+    property string textViewMode: "raw"
+    property string formattedJsonContent: ""
 
     signal openRequested()
     signal fileDropped(url fileUrl)
@@ -29,6 +39,23 @@ Rectangle {
             decompilerController.decompileFile(filePath)
         } else {
             decompilerController.clear()
+        }
+    }
+
+    Connections {
+        target: decompilerController.tabsModel
+
+        function onActiveTabChanged() {
+            root.textViewMode = "raw"
+            root.refreshFormattedJson()
+        }
+    }
+
+    Connections {
+        target: decompilerController
+
+        function onSelectedContentChanged() {
+            root.refreshFormattedJson()
         }
     }
 
@@ -164,9 +191,14 @@ Rectangle {
                     currentIndex: decompilerController.tabsModel.activeIndex
 
                     delegate: Rectangle {
+                        id: tabDelegate
+
                         width: Math.min(220, Math.max(136, tabTitle.implicitWidth + 52))
                         height: openTabs.height
                         color: model.active ? editorColor : (darkTheme ? "#20242b" : "#e4eaed")
+                        ToolTip.text: model.path.length > 0 ? model.path : model.name
+                        ToolTip.visible: tabMouse.containsMouse && !tabMenu.visible
+                        ToolTip.delay: 500
 
                         Rectangle {
                             anchors.left: parent.left
@@ -229,11 +261,60 @@ Rectangle {
                             }
                         }
 
+                        CompactMenu {
+                            id: tabMenu
+                            minimumItemWidth: 190
+
+                            Action {
+                                text: qsTr("Close")
+                                onTriggered: decompilerController.tabsModel.closeTab(index)
+                            }
+
+                            CompactMenuSeparator {}
+
+                            Action {
+                                text: qsTr("Close Others")
+                                enabled: openTabs.count > 1
+                                onTriggered: decompilerController.tabsModel.closeOtherTabs(index)
+                            }
+
+                            Action {
+                                text: qsTr("Close Tabs to the Left")
+                                enabled: index > 0
+                                onTriggered: decompilerController.tabsModel.closeTabsToLeft(index)
+                            }
+
+                            Action {
+                                text: qsTr("Close Tabs to the Right")
+                                enabled: index < openTabs.count - 1
+                                onTriggered: decompilerController.tabsModel.closeTabsToRight(index)
+                            }
+
+                            CompactMenuSeparator {}
+
+                            Action {
+                                text: qsTr("Close All")
+                                onTriggered: decompilerController.tabsModel.clear()
+                            }
+                        }
+
                         MouseArea {
+                            id: tabMouse
                             anchors.fill: parent
                             anchors.rightMargin: closeButton.width
-                            acceptedButtons: Qt.LeftButton
-                            onClicked: decompilerController.tabsModel.activeIndex = index
+                            acceptedButtons: Qt.LeftButton | Qt.RightButton
+                            hoverEnabled: true
+                            onClicked: function(mouse) {
+                                if (mouse.button === Qt.LeftButton) {
+                                    decompilerController.tabsModel.activeIndex = index
+                                }
+                            }
+                            onPressed: function(mouse) {
+                                if (mouse.button === Qt.RightButton) {
+                                    decompilerController.tabsModel.activeIndex = index
+                                    tabMenu.popup(tabDelegate, mouse.x, mouse.y)
+                                }
+                            }
                         }
                     }
                 }
@@ -244,40 +325,163 @@ Rectangle {
                 Layout.fillHeight: true
                 color: editorColor
 
-                CodeView {
+                ColumnLayout {
                     anchors.fill: parent
-                    visible: decompilerController.tabsModel.hasTabs
-                             && decompilerController.tabsModel.activeContentMode === "text"
-                    code: decompilerController.selectedContent
-                    highlightTheme: root.highlightTheme
+                    spacing: 0
+
+                    Item {
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+
+                        CodeView {
+                            anchors.fill: parent
+                            visible: decompilerController.tabsModel.hasTabs
+                                     && decompilerController.tabsModel.activeContentMode === "text"
+                                     && root.textViewMode !== "binary"
+                            code: root.textViewMode === "formatted"
+                                  ? root.formattedJsonContent
+                                  : decompilerController.selectedContent
+                            highlightTheme: root.highlightTheme
+                            syntax: root.activeIsJson
+                                    ? "JSON"
+                                    : decompilerController.tabsModel.activePath
+                        }
+
+                        HexView {
+                            anchors.fill: parent
+                            visible: decompilerController.tabsModel.hasTabs
+                                     && (decompilerController.tabsModel.activeContentMode === "hex"
+                                         || root.textViewMode === "binary")
+                            hexModel: decompilerController.hexModel
+                        }
+
+                        ImageView {
+                            anchors.fill: parent
+                            visible: decompilerController.tabsModel.hasTabs
+                                     && decompilerController.tabsModel.activeContentMode === "image"
+                            sourceData: visible ? decompilerController.selectedContent : ""
+                        }
+
+                        MediaView {
+                            anchors.fill: parent
+                            visible: decompilerController.tabsModel.hasTabs
+                                     && decompilerController.tabsModel.activeContentMode === "media"
+                            sourceUrl: visible ? decompilerController.selectedContent : ""
+                            fileName: decompilerController.tabsModel.activeName
+                        }
+
+                        Label {
+                            anchors.centerIn: parent
+                            visible: !decompilerController.tabsModel.hasTabs && !decompilerController.busy
+                            text: !hasPackage
+                                  ? (dropArea.containsDrag
+                                     ? qsTr("Release to open package")
+                                     : qsTr("Open or drop a .hap, .app, or .abc file"))
+                                  : qsTr("Select a file from the tree")
+                            color: secondaryTextColor
+                            font.pixelSize: 15
+                        }
+                    }
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: root.fileToolsVisible ? 30 : 0
+                        visible: root.fileToolsVisible
+                        color: darkTheme ? "#171a1f" : "#eef2f4"
+                        border.width: 1
+                        border.color: dividerColor
+                        clip: true
+
+                        RowLayout {
+                            anchors.fill: parent
+                            anchors.leftMargin: 12
+                            anchors.rightMargin: 12
+                            spacing: 8
+
+                            Label {
+                                text: root.activeIsJson ? qsTr("JSON") : qsTr("Resource index")
+                                color: secondaryTextColor
+                                font.pixelSize: 11
+                                font.weight: Font.DemiBold
+                                verticalAlignment: Text.AlignVCenter
+                            }
+
+                            Item {
+                                Layout.preferredWidth: 4
+                            }
+
+                            ButtonGroup {
+                                id: fileViewGroup
+                            }
+
+                            ToolButton {
+                                ButtonGroup.group: fileViewGroup
+                                checkable: true
+                                checked: root.textViewMode === "raw"
+                                text: root.activeIsJson ? qsTr("Raw") : qsTr("Text")
+                                implicitWidth: 58
+                                implicitHeight: 24
+                                padding: 0
+                                onClicked: root.textViewMode = "raw"
+                            }
+
+                            ToolButton {
+                                ButtonGroup.group: fileViewGroup
+                                checkable: true
+                                checked: root.textViewMode === "formatted"
+                                visible: root.activeIsJson
+                                text: qsTr("Formatted")
+                                implicitWidth: 92
+                                implicitHeight: 24
+                                padding: 0
+                                onClicked: {
+                                    root.refreshFormattedJson()
+                                    root.textViewMode = "formatted"
+                                }
+                            }
+
+                            ToolButton {
+                                ButtonGroup.group: fileViewGroup
+                                checkable: true
+                                checked: root.textViewMode === "binary"
+                                visible: root.activeIsResourceIndex
+                                text: qsTr("Binary")
+                                implicitWidth: 72
+                                implicitHeight: 24
+                                padding: 0
+                                onClicked: root.textViewMode = "binary"
+                            }
+
+                            Item {
+                                Layout.fillWidth: true
+                            }
+
+                            Label {
+                                text: decompilerController.tabsModel.activePath
+                                color: secondaryTextColor
+                                font.pixelSize: 11
+                                elide: Text.ElideMiddle
+                                horizontalAlignment: Text.AlignRight
+                                verticalAlignment: Text.AlignVCenter
+                                Layout.maximumWidth: 420
+                            }
+                        }
+                    }
                 }
 
-                HexView {
-                    anchors.fill: parent
-                    visible: decompilerController.tabsModel.hasTabs
-                             && decompilerController.tabsModel.activeContentMode === "hex"
-                    hexData: decompilerController.selectedContent
-                }
-
-                ImageView {
-                    anchors.fill: parent
-                    visible: decompilerController.tabsModel.hasTabs
-                             && decompilerController.tabsModel.activeContentMode === "image"
-                    sourceData: decompilerController.selectedContent
-                }
-
-                Label {
-                    anchors.centerIn: parent
-                    visible: !decompilerController.tabsModel.hasTabs && !decompilerController.busy
-                    text: !hasPackage
-                          ? (dropArea.containsDrag
-                             ? qsTr("Release to open package")
-                             : qsTr("Open or drop a .hap, .app, or .abc file"))
-                          : qsTr("Select a file from the tree")
-                    color: secondaryTextColor
-                    font.pixelSize: 15
-                }
             }
+        }
+    }
+
+    function isJsonKind(kind) {
+        return kind === "JSON"
+    }
+
+    function refreshFormattedJson() {
+        if (activeIsJson) {
+            formattedJsonContent = decompilerController.formatJson(decompilerController.selectedContent)
+        } else {
+            formattedJsonContent = ""
         }
     }
 }

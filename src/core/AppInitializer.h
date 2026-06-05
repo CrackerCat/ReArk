@@ -6,6 +6,8 @@
 #include <QString>
 
 class DecompilerController;
+class ResourcePreviewProvider;
+class WindowChrome;
 
 class AppInitializer {
 public:
@@ -22,7 +24,9 @@ private:
     QGuiApplication& app_;
     QQmlApplicationEngine& engine_;
     QString initialFileUrl_;
+    ResourcePreviewProvider* resourcePreviewProvider_ = nullptr;
     DecompilerController* decompilerController_ = nullptr;
+    WindowChrome* windowChrome_ = nullptr;
 };
 
 #endif // REARK_APP_INITIALIZER_H

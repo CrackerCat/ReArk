@@ -1,11 +1,12 @@
 #include "core/HyleDecompiler.h"
 
+#include "core/PerformanceTrace.h"
+
 #include <hyle.h>
 
 #include <QFileInfo>
-#include <QJsonArray>
 #include <QJsonDocument>
-#include <QJsonObject>
+#include <QJsonParseError>
 #include <QMimeDatabase>
 #include <QMimeType>
 #include <QStringList>
@@ -13,6 +14,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstddef>
+#include <thread>
 #include <system_error>
 
 namespace {
@@ -105,6 +107,13 @@ bool isImageMime(const QMimeType& mime)
     return mime.isValid() && mime.name().startsWith(QStringLiteral("image/"));
 }
 
+bool isMediaMime(const QMimeType& mime)
+{
+    return mime.isValid()
+        && (mime.name().startsWith(QStringLiteral("video/"))
+            || mime.name().startsWith(QStringLiteral("audio/")));
+}
+
 bool isImageResource(hyle::hap::hap_resource_kind kind, const std::string& path)
 {
     if (isImageResource(kind)) {
@@ -135,6 +144,17 @@ QByteArray bytesToByteArray(const std::vector<std::byte>& bytes)
         static_cast<qsizetype>(bytes.size()));
 }
 
+bool isJsonContent(const QByteArray& bytes)
+{
+    if (bytes.isEmpty()) {
+        return false;
+    }
+
+    QJsonParseError parseError;
+    const QJsonDocument document = QJsonDocument::fromJson(bytes, &parseError);
+    return parseError.error == QJsonParseError::NoError && !document.isNull();
+}
+
 QMimeType detectResourceMimeType(const hyle::hap::hap_resource_content& content)
 {
     QMimeDatabase mimeDatabase;
@@ -151,51 +171,19 @@ bool isImageResource(const hyle::hap::hap_resource_content& content)
     return isImageResource(content.kind, content.path) || isImageMime(detectResourceMimeType(content));
 }
 
-QString imageMimeType(const hyle::hap::hap_resource_content& content)
+bool isMediaResource(hyle::hap::hap_resource_kind kind, const std::string& path)
 {
-    const auto mime = detectResourceMimeType(content);
-    return isImageMime(mime) ? mime.name() : QStringLiteral("image/png");
-}
-
-QString formatImageResource(const hyle::hap::hap_resource_content& content)
-{
-    const auto bytes = bytesToByteArray(content.bytes);
-    return QStringLiteral("data:%1;base64,%2")
-        .arg(imageMimeType(content), QString::fromLatin1(bytes.toBase64()));
-}
-
-QJsonArray buildHexRows(const std::vector<std::byte>& bytes)
-{
-    QJsonArray rows;
-    for (std::size_t offset = 0; offset < bytes.size(); offset += 16U) {
-        QJsonArray values;
-        QString ascii;
-        const auto lineSize = std::min<std::size_t>(16U, bytes.size() - offset);
-        for (std::size_t i = 0; i < lineSize; ++i) {
-            const auto value = std::to_integer<unsigned int>(bytes.at(offset + i));
-            values.append(QStringLiteral("%1").arg(value, 2, 16, QLatin1Char('0')).toUpper());
-            ascii += value >= 32U && value <= 126U
-                ? QLatin1Char(static_cast<char>(value))
-                : QLatin1Char('.');
-        }
-        QJsonObject row;
-        row.insert(QStringLiteral("address"),
-            QStringLiteral("%1").arg(static_cast<qulonglong>(offset), 8, 16, QLatin1Char('0')).toUpper());
-        row.insert(QStringLiteral("bytes"), values);
-        row.insert(QStringLiteral("ascii"), ascii);
-        rows.append(row);
+    if (kind == hyle::hap::hap_resource_kind::media) {
+        return true;
     }
-    return rows;
+
+    QMimeDatabase mimeDatabase;
+    return isMediaMime(mimeDatabase.mimeTypeForFile(fromUtf8(path), QMimeDatabase::MatchExtension));
 }
 
-QString formatHexResource(const hyle::hap::hap_resource_content& content)
+bool isMediaResource(const hyle::hap::hap_resource_content& content)
 {
-    QJsonObject root;
-    root.insert(QStringLiteral("path"), fromUtf8(content.path));
-    root.insert(QStringLiteral("kind"), resourceKindName(content.kind));
-    root.insert(QStringLiteral("size"), QString::number(static_cast<qulonglong>(content.bytes.size())));
-    root.insert(QStringLiteral("rows"), buildHexRows(content.bytes));
-    return QString::fromUtf8(QJsonDocument(root).toJson(QJsonDocument::Compact));
+    return isMediaResource(content.kind, content.path) || isMediaMime(detectResourceMimeType(content));
 }
 
 QString boolText(bool value)
@@ -340,6 +328,7 @@ DecompiledSourceFile inspectSignatureFile(const std::string& hylePath)
             QStringLiteral("Signature.txt"),
             QStringLiteral("TXT"),
             errorMessage("Inspect signature failed", signature.error()),
+            {},
             QStringLiteral("signature"),
             QStringLiteral("text"),
             0,
@@ -351,6 +340,7 @@ DecompiledSourceFile inspectSignatureFile(const std::string& hylePath)
         QStringLiteral("Signature.txt"),
         QStringLiteral("TXT"),
         formatSignatureInfo(*signature),
+        {},
         QStringLiteral("signature"),
         QStringLiteral("text"),
         0,
@@ -358,14 +348,18 @@ DecompiledSourceFile inspectSignatureFile(const std::string& hylePath)
     };
 }
 
-DecompiledSourceFile inspectSummaryFile(const hyle::hap::decompiled_package_session& session)
+DecompiledSourceFile inspectSummaryFile(const HyleDecompiler::SessionContext& context)
 {
-    auto summary = session.summary();
+    auto summary = hyle::async::sync_wait(
+        context.session.summary_async(
+            context.scheduler(),
+            context.stopToken()));
     if (!summary) {
         return {
             QStringLiteral("Summary"),
             QStringLiteral("TXT"),
             errorMessage("Summarize package failed", summary.error()),
+            {},
             QStringLiteral("summary"),
             QStringLiteral("text"),
             0,
@@ -377,10 +371,39 @@ DecompiledSourceFile inspectSummaryFile(const hyle::hap::decompiled_package_sess
         QStringLiteral("Summary"),
         QStringLiteral("TXT"),
         normalizeSourceContent(fromUtf8(hyle::hap::format_decompiled_package_summary(*summary))),
+        {},
         QStringLiteral("summary"),
         QStringLiteral("text"),
         0,
         false
+    };
+}
+
+DecompiledSourceFile lazySignatureFile()
+{
+    return {
+        QStringLiteral("Signature.txt"),
+        QStringLiteral("TXT"),
+        {},
+        {},
+        QStringLiteral("signature"),
+        QStringLiteral("text"),
+        0,
+        true
+    };
+}
+
+DecompiledSourceFile lazySummaryFile()
+{
+    return {
+        QStringLiteral("Summary"),
+        QStringLiteral("TXT"),
+        {},
+        {},
+        QStringLiteral("summary"),
+        QStringLiteral("text"),
+        0,
+        true
     };
 }
 
@@ -407,6 +430,7 @@ std::vector<DecompiledSourceFile> fromSourceFiles(
             fromUtf8(file.path),
             languageKind(file.language),
             normalizeSourceContent(fromUtf8(file.content)),
+            {},
             QStringLiteral("source"),
             QStringLiteral("text"),
             0,
@@ -421,12 +445,47 @@ std::vector<DecompiledSourceFile> fromSourceFiles(
 
 namespace HyleDecompiler {
 
-OpenResult openFile(const QString& filePath)
+SessionContext::SessionContext()
+    : executor(std::max<std::size_t>(
+          2U,
+          static_cast<std::size_t>(std::thread::hardware_concurrency())))
 {
+}
+
+hyle::async::scheduler SessionContext::scheduler() const noexcept
+{
+    return executor.get_scheduler();
+}
+
+std::stop_token SessionContext::stopToken() const noexcept
+{
+    return stopSource.get_token();
+}
+
+void SessionContext::requestStop() noexcept
+{
+    stopSource.request_stop();
+}
+
+OpenResult openFile(
+    const QString& filePath,
+    const std::shared_ptr<SessionContext>& context)
+{
+    PerformanceTrace trace(QStringLiteral("HyleDecompiler::openFile"));
+
     OpenResult result;
+    result.context = context;
     const QFileInfo fileInfo(filePath);
     if (!fileInfo.exists() || !fileInfo.isFile()) {
         result.error = QObject::tr("File does not exist: %1").arg(filePath);
+        return result;
+    }
+    if (!context) {
+        result.error = QObject::tr("Decompiler worker is not available.");
+        return result;
+    }
+    if (context->stopToken().stop_requested()) {
+        result.error = QObject::tr("Open package cancelled.");
         return result;
     }
 
@@ -443,18 +502,26 @@ OpenResult openFile(const QString& filePath)
         return result;
     }
 
-    auto session = hyle::hap::open_decompiled_package(hylePath);
+    auto session = hyle::async::sync_wait(
+        hyle::hap::open_decompiled_package_async(
+            context->scheduler(),
+            hylePath,
+            {},
+            context->stopToken()));
     if (!session) {
         result.error = errorMessage("Open package failed", session.error());
         return result;
     }
 
-    const auto sourceFileCount = session->source_files().size();
-    result.files.reserve(sourceFileCount + session->resources().size() + 2U);
-    for (const auto& file : session->source_files()) {
+    context->session = std::move(*session);
+
+    const auto sourceFileCount = context->session.source_files().size();
+    result.files.reserve(sourceFileCount + context->session.resources().size() + 2U);
+    for (const auto& file : context->session.source_files()) {
         result.files.push_back({
             fromUtf8(file.path),
             languageKind(file.language),
+            {},
             {},
             QStringLiteral("source"),
             QStringLiteral("text"),
@@ -462,14 +529,16 @@ OpenResult openFile(const QString& filePath)
             true
         });
     }
-    for (const auto& resource : session->resources()) {
+    for (const auto& resource : context->session.resources()) {
         result.files.push_back({
             fromUtf8(resource.path),
             resourceKindName(resource.kind),
             {},
+            {},
             QStringLiteral("resource"),
             isImageResource(resource.kind, resource.path)
                 ? QStringLiteral("image")
+                : isMediaResource(resource.kind, resource.path) ? QStringLiteral("media")
                 : isTextResource(resource.kind) ? QStringLiteral("text") : QStringLiteral("hex"),
             resource.id,
             !resource.is_directory,
@@ -477,70 +546,125 @@ OpenResult openFile(const QString& filePath)
         });
     }
 
-    result.files.push_back(inspectSignatureFile(hylePath));
-    result.files.push_back(inspectSummaryFile(*session));
+    result.files.push_back(lazySignatureFile());
+    result.files.push_back(lazySummaryFile());
 
-    result.session = std::make_shared<Session>(std::move(*session));
-    result.sessionMutex = std::make_shared<std::mutex>();
     result.status = QObject::tr("Loaded %1 source file(s)").arg(static_cast<int>(sourceFileCount));
     return result;
 }
 
 SourceResult readResourceContent(
-    const std::shared_ptr<Session>& session,
-    const std::shared_ptr<std::mutex>& sessionMutex,
+    const std::shared_ptr<SessionContext>& context,
     int nodeIndex,
     std::size_t hyleId,
     const QString& name)
 {
+    PerformanceTrace trace(QStringLiteral("HyleDecompiler::readResourceContent"));
+
     SourceResult result;
     result.nodeIndex = nodeIndex;
     result.name = name;
 
-    if (!session || !sessionMutex) {
+    if (!context || !context->session.valid()) {
         result.error = QObject::tr("Decompiler session is not available.");
         return result;
     }
 
-    std::lock_guard<std::mutex> lock(*sessionMutex);
-    auto content = session->read_resource(hyleId);
+    auto content = hyle::async::sync_wait(
+        context->session.read_resource_async(
+            context->scheduler(),
+            hyleId,
+            context->stopToken()));
     if (!content) {
         result.error = errorMessage("Read resource failed", content.error());
         return result;
     }
 
-    result.kind = resourceKindName(content->kind);
+    const QByteArray bytes = bytesToByteArray(content->bytes);
+    const bool textResource = isTextResource(content->kind);
+    const bool jsonContent = !textResource && isJsonContent(bytes);
+
+    result.kind = jsonContent ? QStringLiteral("JSON") : resourceKindName(content->kind);
     if (isImageResource(*content)) {
         result.contentMode = QStringLiteral("image");
-        result.content = formatImageResource(*content);
-    } else if (isTextResource(content->kind)) {
+        result.binaryContent = bytes;
+    } else if (isMediaResource(*content)) {
+        result.contentMode = QStringLiteral("media");
+        result.binaryContent = bytes;
+    } else if (textResource || jsonContent) {
         result.contentMode = QStringLiteral("text");
-        result.content = normalizeSourceContent(bytesToUtf8Text(content->bytes));
+        result.binaryContent = bytes;
+        result.content = normalizeSourceContent(QString::fromUtf8(bytes.constData(), bytes.size()));
     } else {
         result.contentMode = QStringLiteral("hex");
-        result.content = formatHexResource(*content);
+        result.binaryContent = bytes;
     }
     return result;
 }
 
-SourceResult decompileSourceFile(
-    const std::shared_ptr<Session>& session,
-    const std::shared_ptr<std::mutex>& sessionMutex,
+SourceResult readSignatureContent(
+    const QString& filePath,
     int nodeIndex,
-    std::size_t hyleId,
     const QString& name)
 {
+    PerformanceTrace trace(QStringLiteral("HyleDecompiler::readSignatureContent"));
+
     SourceResult result;
     result.nodeIndex = nodeIndex;
     result.name = name;
+    result.kind = QStringLiteral("TXT");
+    result.contentMode = QStringLiteral("text");
 
-    if (!session || !sessionMutex) {
+    const auto signature = inspectSignatureFile(toUtf8Path(filePath));
+    result.content = signature.content;
+    return result;
+}
+
+SourceResult readSummaryContent(
+    const std::shared_ptr<SessionContext>& context,
+    int nodeIndex,
+    const QString& name)
+{
+    PerformanceTrace trace(QStringLiteral("HyleDecompiler::readSummaryContent"));
+
+    SourceResult result;
+    result.nodeIndex = nodeIndex;
+    result.name = name;
+    result.kind = QStringLiteral("TXT");
+    result.contentMode = QStringLiteral("text");
+
+    if (!context || !context->session.valid()) {
         result.error = QObject::tr("Decompiler session is not available.");
         return result;
     }
 
-    std::lock_guard<std::mutex> lock(*sessionMutex);
-    auto package = session->decompile_source_file(hyleId);
+    result.content = inspectSummaryFile(*context).content;
+    return result;
+}
+
+SourceResult decompileSourceFile(
+    const std::shared_ptr<SessionContext>& context,
+    int nodeIndex,
+    std::size_t hyleId,
+    const QString& name)
+{
+    PerformanceTrace trace(QStringLiteral("HyleDecompiler::decompileSourceFile"));
+
+    SourceResult result;
+    result.nodeIndex = nodeIndex;
+    result.name = name;
+
+    if (!context || !context->session.valid()) {
+        result.error = QObject::tr("Decompiler session is not available.");
+        return result;
+    }
+
+    auto package = hyle::async::sync_wait(
+        context->session.decompile_source_file_async(
+            context->scheduler(),
+            hyleId,
+            {},
+            context->stopToken()));
     if (!package) {
         result.error = errorMessage("Decompile failed", package.error());
         return result;

@@ -2,23 +2,33 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Controls.Material
 import QtQuick.Layouts
+import com.reark.app
 
 Rectangle {
     id: root
 
     property string currentTheme: "dark"
-    property string currentHighlightTheme: "github-dark"
+    property string currentHighlightTheme: "GitHub Dark"
+    property bool embedded: false
+    property bool menuNavigationActive: false
     readonly property bool darkTheme: Material.theme === Material.Dark
 
     signal openRequested()
     signal themeRequested(string theme)
     signal highlightThemeRequested(string theme)
 
-    implicitHeight: 30
-    height: 30
-    color: darkTheme ? "#3f3f3f" : "#f3f3f3"
+    implicitWidth: menuRow.implicitWidth
+    implicitHeight: embedded ? 32 : 30
+    height: implicitHeight
+    color: embedded ? "transparent" : (darkTheme ? "#3f3f3f" : "#f3f3f3")
 
-    function showMenu(source, menu) {
+    function showMenu(source, menu, toggle) {
+        if (toggle && menu.visible) {
+            menu.close()
+            return
+        }
+
+        menuNavigationActive = true
         if (fileMenu !== menu) {
             fileMenu.close()
         }
@@ -33,34 +43,76 @@ Rectangle {
         }
     }
 
+    function anyMenuVisible() {
+        return fileMenu.visible || viewMenu.visible || helpMenu.visible
+    }
+
+    function leaveMenuNavigationWhenClosed() {
+        Qt.callLater(function() {
+            if (!root.anyMenuVisible()) {
+                root.menuNavigationActive = false
+            }
+        })
+    }
+
     RowLayout {
+        id: menuRow
+
         anchors.left: parent.left
         anchors.top: parent.top
         anchors.bottom: parent.bottom
         spacing: 0
 
         MenuBarButton {
+            id: fileButton
+
             text: "File"
             menu: fileMenu
-            onMenuRequested: function(source, menu) { root.showMenu(source, menu) }
+            embedded: root.embedded
+            menuNavigationActive: root.menuNavigationActive
+            onMenuRequested: function(source, menu, toggle) { root.showMenu(source, menu, toggle) }
         }
 
         MenuBarButton {
+            id: viewButton
+
             text: "View"
             menu: viewMenu
-            onMenuRequested: function(source, menu) { root.showMenu(source, menu) }
+            embedded: root.embedded
+            menuNavigationActive: root.menuNavigationActive
+            onMenuRequested: function(source, menu, toggle) { root.showMenu(source, menu, toggle) }
         }
 
         MenuBarButton {
+            id: helpButton
+
             text: "Help"
             menu: helpMenu
-            onMenuRequested: function(source, menu) { root.showMenu(source, menu) }
+            embedded: root.embedded
+            menuNavigationActive: root.menuNavigationActive
+            onMenuRequested: function(source, menu, toggle) { root.showMenu(source, menu, toggle) }
         }
+    }
+
+    Shortcut {
+        sequence: "Alt+F"
+        onActivated: root.showMenu(fileButton, fileMenu, false)
+    }
+
+    Shortcut {
+        sequence: "Alt+V"
+        onActivated: root.showMenu(viewButton, viewMenu, false)
+    }
+
+    Shortcut {
+        sequence: "Alt+H"
+        onActivated: root.showMenu(helpButton, helpMenu, false)
     }
 
     CompactMenu {
         id: fileMenu
         minimumItemWidth: 200
+        onClosed: root.leaveMenuNavigationWhenClosed()
 
         Action {
             text: qsTr("Open...")
@@ -106,38 +158,74 @@ Rectangle {
 
     CompactMenu {
         id: viewMenu
+        onClosed: root.leaveMenuNavigationWhenClosed()
 
-        Action {
-            text: qsTr("GitHub Dark")
-            checkable: true
-            checked: root.currentHighlightTheme === "github-dark"
-            onTriggered: root.highlightThemeRequested("github-dark")
+        SyntaxThemeProvider {
+            id: syntaxThemeProvider
         }
 
-        Action {
-            text: qsTr("GitHub Light")
-            checkable: true
-            checked: root.currentHighlightTheme === "github-light"
-            onTriggered: root.highlightThemeRequested("github-light")
-        }
+        CompactMenu {
+            id: syntaxHighlightMenu
 
-        Action {
-            text: qsTr("Darcula")
-            checkable: true
-            checked: root.currentHighlightTheme === "darcula"
-            onTriggered: root.highlightThemeRequested("darcula")
-        }
+            title: qsTr("Syntax Highlight")
+            minimumItemWidth: 210
+            delegate: MenuItem {
+                id: syntaxThemeItem
 
-        Action {
-            text: qsTr("Monokai")
-            checkable: true
-            checked: root.currentHighlightTheme === "monokai"
-            onTriggered: root.highlightThemeRequested("monokai")
+                implicitHeight: 28
+                padding: 12
+                verticalPadding: 4
+                spacing: 12
+                font.pixelSize: 13
+                indicator: null
+
+                contentItem: RowLayout {
+                    spacing: 12
+
+                    Label {
+                        Layout.fillWidth: true
+                        text: syntaxThemeItem.text
+                        color: syntaxThemeItem.enabled ? Material.foreground : Material.hintTextColor
+                        font: syntaxThemeItem.font
+                        elide: Text.ElideRight
+                        verticalAlignment: Text.AlignVCenter
+                    }
+
+                    Label {
+                        Layout.preferredWidth: 18
+                        text: syntaxThemeItem.checked ? "✓" : ""
+                        color: syntaxThemeItem.enabled ? Material.foreground : Material.hintTextColor
+                        font: syntaxThemeItem.font
+                        horizontalAlignment: Text.AlignRight
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                }
+            }
+
+            Instantiator {
+                model: syntaxThemeProvider.themes
+
+                delegate: Action {
+                    text: modelData
+                    checkable: true
+                    checked: root.currentHighlightTheme === modelData
+                    onTriggered: root.highlightThemeRequested(modelData)
+                }
+
+                onObjectAdded: function(index, object) {
+                    syntaxHighlightMenu.insertAction(index, object)
+                }
+
+                onObjectRemoved: function(index, object) {
+                    syntaxHighlightMenu.removeAction(object)
+                }
+            }
         }
     }
 
     CompactMenu {
         id: helpMenu
+        onClosed: root.leaveMenuNavigationWhenClosed()
 
         Action {
             text: qsTr("About ReArk")

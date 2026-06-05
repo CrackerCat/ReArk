@@ -1,6 +1,8 @@
 #include "core/AppInitializer.h"
 
 #include "controller/DecompilerController.h"
+#include "core/ResourcePreviewProvider.h"
+#include "core/WindowChrome.h"
 
 #include <QIcon>
 #include <QQmlContext>
@@ -40,12 +42,16 @@ void AppInitializer::initializeApplication()
 
 void AppInitializer::initializeContext()
 {
-    decompilerController_ = new DecompilerController(&engine_);
+    resourcePreviewProvider_ = new ResourcePreviewProvider();
+    engine_.addImageProvider(QStringLiteral("rearkResources"), resourcePreviewProvider_);
+    decompilerController_ = new DecompilerController(resourcePreviewProvider_, &engine_);
+    windowChrome_ = new WindowChrome(&engine_);
 
     auto* context = engine_.rootContext();
     context->setContextProperty(QStringLiteral("appVersion"), QStringLiteral(REARK_VERSION));
     context->setContextProperty(QStringLiteral("initialFileUrl"), initialFileUrl_);
     context->setContextProperty(QStringLiteral("decompilerController"), decompilerController_);
+    context->setContextProperty(QStringLiteral("windowChrome"), windowChrome_);
 }
 
 void AppInitializer::initializeQmlModules()

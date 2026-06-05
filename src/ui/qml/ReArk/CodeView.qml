@@ -7,7 +7,8 @@ Rectangle {
     id: root
 
     property string code: ""
-    property string highlightTheme: "github-dark"
+    property string highlightTheme: "GitHub Dark"
+    property string syntax: ""
     readonly property bool darkTheme: Material.theme === Material.Dark
     readonly property color editorColor: darkTheme ? "#111419" : "#ffffff"
 
@@ -25,17 +26,22 @@ Rectangle {
             id: editor
             x: flickable.contentX
             y: flickable.contentY
-            height: flickable.height
             width: flickable.width
+            height: flickable.height
             text: root.code
             darkTheme: root.darkTheme
             highlightTheme: root.highlightTheme
+            syntax: root.syntax
+            fastScrolling: flickable.moving || flickable.flicking || verticalScrollBar.pressed || horizontalScrollBar.pressed
             scrollX: flickable.contentX
             scrollY: flickable.contentY
         }
 
         MouseArea {
-            anchors.fill: parent
+            x: flickable.contentX
+            y: flickable.contentY
+            width: flickable.width
+            height: flickable.height
             acceptedButtons: Qt.RightButton
             onClicked: function(mouse) {
                 contextMenu.popup(editor, mouse.x, mouse.y)
@@ -72,10 +78,12 @@ Rectangle {
         }
 
         ScrollBar.vertical: ScrollBar {
+            id: verticalScrollBar
             policy: ScrollBar.AsNeeded
         }
 
         ScrollBar.horizontal: ScrollBar {
+            id: horizontalScrollBar
             policy: ScrollBar.AsNeeded
         }
     }

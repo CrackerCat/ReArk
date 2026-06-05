@@ -1,38 +1,30 @@
 #ifndef REARK_SYNTAX_HIGHLIGHTER_H
 #define REARK_SYNTAX_HIGHLIGHTER_H
 
-#include "presentation/CodeTheme.h"
+#include <KSyntaxHighlighting/Definition>
+#include <KSyntaxHighlighting/SyntaxHighlighter>
+#include <KSyntaxHighlighting/Theme>
 
-#include <QRegularExpression>
-#include <QSyntaxHighlighter>
-#include <QTextCharFormat>
-
-class SyntaxHighlighter : public QSyntaxHighlighter {
+class SyntaxHighlighter : public KSyntaxHighlighting::SyntaxHighlighter {
     Q_OBJECT
 
 public:
     explicit SyntaxHighlighter(QTextDocument* parent = nullptr);
     void setTheme(const QString& themeId, bool darkFallback);
-
-protected:
-    void highlightBlock(const QString& text) override;
+    void setSyntax(const QString& syntax);
+    void setHighlightingEnabled(bool enabled);
 
 private:
-    struct Rule {
-        QRegularExpression pattern;
-        QTextCharFormat format;
-    };
+    void refreshDefinition();
+    void refreshTheme();
+    [[nodiscard]] KSyntaxHighlighting::Definition definitionForSyntax(const QString& syntax) const;
+    [[nodiscard]] KSyntaxHighlighting::Theme themeForId(const QString& themeId, bool darkFallback) const;
+    [[nodiscard]] QString normalizedThemeName(const QString& themeId) const;
 
-    void rebuildRules();
-
-    QVector<Rule> rules_;
+    bool highlightingEnabled_ = true;
     bool darkTheme_ = true;
-    QString themeId_ = QStringLiteral("github-dark");
-    QTextCharFormat keywordFormat_;
-    QTextCharFormat typeFormat_;
-    QTextCharFormat stringFormat_;
-    QTextCharFormat commentFormat_;
-    QTextCharFormat numberFormat_;
+    QString themeId_ = QStringLiteral("GitHub Dark");
+    QString syntax_;
 };
 
 #endif // REARK_SYNTAX_HIGHLIGHTER_H

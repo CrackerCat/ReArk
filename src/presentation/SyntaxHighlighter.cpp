@@ -1,21 +1,24 @@
 #include "presentation/SyntaxHighlighter.h"
 
+#include <KSyntaxHighlighting/Repository>
+
+#include <QFileInfo>
+
 namespace {
 
-QTextCharFormat makeFormat(const QColor& color, QFont::Weight weight = QFont::Normal)
+KSyntaxHighlighting::Repository& syntaxRepository()
 {
-    QTextCharFormat result;
-    result.setForeground(color);
-    result.setFontWeight(weight);
-    return result;
+    static auto* repository = new KSyntaxHighlighting::Repository;
+    return *repository;
 }
 
 } // namespace
 
 SyntaxHighlighter::SyntaxHighlighter(QTextDocument* parent)
-    : QSyntaxHighlighter(parent)
+    : KSyntaxHighlighting::SyntaxHighlighter(parent)
 {
-    rebuildRules();
+    refreshTheme();
+    refreshDefinition();
 }
 
 void SyntaxHighlighter::setTheme(const QString& themeId, bool darkFallback)
@@ -26,93 +29,105 @@ void SyntaxHighlighter::setTheme(const QString& themeId, bool darkFallback)
 
     themeId_ = themeId;
     darkTheme_ = darkFallback;
-    rebuildRules();
+    refreshTheme();
+}
+
+void SyntaxHighlighter::setSyntax(const QString& syntax)
+{
+    if (syntax_ == syntax) {
+        return;
+    }
+
+    syntax_ = syntax;
+    refreshDefinition();
+}
+
+void SyntaxHighlighter::setHighlightingEnabled(bool enabled)
+{
+    if (highlightingEnabled_ == enabled) {
+        return;
+    }
+    highlightingEnabled_ = enabled;
+    refreshDefinition();
+}
+
+void SyntaxHighlighter::refreshDefinition()
+{
+    if (!highlightingEnabled_) {
+        setDefinition(KSyntaxHighlighting::Definition());
+        rehighlight();
+        return;
+    }
+
+    setDefinition(definitionForSyntax(syntax_));
     rehighlight();
 }
 
-void SyntaxHighlighter::rebuildRules()
+void SyntaxHighlighter::refreshTheme()
 {
-    rules_.clear();
-    const CodeTheme theme = codeThemeForId(themeId_, darkTheme_);
-
-    keywordFormat_ = makeFormat(theme.keyword, QFont::DemiBold);
-    typeFormat_ = makeFormat(theme.type);
-    stringFormat_ = makeFormat(theme.string);
-    commentFormat_ = makeFormat(theme.comment);
-    numberFormat_ = makeFormat(theme.number);
-
-    const QStringList keywords = {
-        QStringLiteral("abstract"), QStringLiteral("as"), QStringLiteral("async"),
-        QStringLiteral("await"), QStringLiteral("break"), QStringLiteral("case"),
-        QStringLiteral("catch"), QStringLiteral("class"), QStringLiteral("const"),
-        QStringLiteral("continue"), QStringLiteral("default"), QStringLiteral("do"),
-        QStringLiteral("else"), QStringLiteral("enum"), QStringLiteral("export"),
-        QStringLiteral("extends"), QStringLiteral("false"), QStringLiteral("finally"),
-        QStringLiteral("for"), QStringLiteral("from"), QStringLiteral("function"),
-        QStringLiteral("if"), QStringLiteral("import"), QStringLiteral("in"),
-        QStringLiteral("let"), QStringLiteral("new"), QStringLiteral("null"),
-        QStringLiteral("private"), QStringLiteral("protected"), QStringLiteral("public"),
-        QStringLiteral("return"), QStringLiteral("static"), QStringLiteral("struct"),
-        QStringLiteral("super"), QStringLiteral("switch"), QStringLiteral("this"),
-        QStringLiteral("throw"), QStringLiteral("true"), QStringLiteral("try"),
-        QStringLiteral("type"), QStringLiteral("undefined"), QStringLiteral("var"),
-        QStringLiteral("void"), QStringLiteral("while")
-    };
-
-    for (const auto& keyword : keywords) {
-        rules_.push_back({
-            QRegularExpression(QStringLiteral("\\b%1\\b").arg(keyword)),
-            keywordFormat_
-        });
-    }
-
-    const QStringList types = {
-        QStringLiteral("Array"), QStringLiteral("Date"), QStringLiteral("Map"),
-        QStringLiteral("Object"), QStringLiteral("Promise"), QStringLiteral("Record"),
-        QStringLiteral("Set"), QStringLiteral("boolean"), QStringLiteral("number"),
-        QStringLiteral("string")
-    };
-    for (const auto& type : types) {
-        rules_.push_back({
-            QRegularExpression(QStringLiteral("\\b%1\\b").arg(type)),
-            typeFormat_
-        });
-    }
-
-    rules_.push_back({ QRegularExpression(QStringLiteral("\\b[0-9][A-Za-z0-9_.]*\\b")), numberFormat_ });
-    rules_.push_back({ QRegularExpression(QStringLiteral("'([^'\\\\]|\\\\.)*'")), stringFormat_ });
-    rules_.push_back({ QRegularExpression(QStringLiteral("\"([^\"\\\\]|\\\\.)*\"")), stringFormat_ });
-    rules_.push_back({ QRegularExpression(QStringLiteral("`([^`\\\\]|\\\\.)*`")), stringFormat_ });
-    rules_.push_back({ QRegularExpression(QStringLiteral("//[^\\n]*")), commentFormat_ });
+    KSyntaxHighlighting::SyntaxHighlighter::setTheme(themeForId(themeId_, darkTheme_));
 }
 
-void SyntaxHighlighter::highlightBlock(const QString& text)
+KSyntaxHighlighting::Definition SyntaxHighlighter::definitionForSyntax(const QString& syntax) const
 {
-    for (const auto& rule : rules_) {
-        auto it = rule.pattern.globalMatch(text);
-        while (it.hasNext()) {
-            const auto match = it.next();
-            setFormat(match.capturedStart(), match.capturedLength(), rule.format);
+    auto& repository = syntaxRepository();
+    const QString trimmed = syntax.trimmed();
+    if (trimmed.isEmpty()) {
+        return {};
+    }
+
+    if (trimmed.compare(QStringLiteral("JSON"), Qt::CaseInsensitive) == 0) {
+        return repository.definitionForName(QStringLiteral("JSON"));
+    }
+
+    const QString lower = trimmed.toLower();
+    if (lower.endsWith(QStringLiteral(".ets"))) {
+        const auto definition = repository.definitionForName(QStringLiteral("TypeScript"));
+        if (definition.isValid()) {
+            return definition;
         }
     }
 
-    setCurrentBlockState(0);
-
-    int start = 0;
-    if (previousBlockState() != 1) {
-        start = text.indexOf(QStringLiteral("/*"));
+    const QFileInfo fileInfo(trimmed);
+    auto definition = repository.definitionForFileName(fileInfo.fileName());
+    if (definition.isValid()) {
+        return definition;
     }
 
-    while (start >= 0) {
-        const int end = text.indexOf(QStringLiteral("*/"), start + 2);
-        int length = 0;
-        if (end == -1) {
-            setCurrentBlockState(1);
-            length = text.length() - start;
-        } else {
-            length = end - start + 2;
-        }
-        setFormat(start, length, commentFormat_);
-        start = text.indexOf(QStringLiteral("/*"), start + length);
+    definition = repository.definitionForName(trimmed);
+    if (definition.isValid()) {
+        return definition;
     }
+
+    return {};
+}
+
+KSyntaxHighlighting::Theme SyntaxHighlighter::themeForId(const QString& themeId, bool darkFallback) const
+{
+    auto& repository = syntaxRepository();
+    auto theme = repository.theme(normalizedThemeName(themeId));
+    if (theme.isValid()) {
+        return theme;
+    }
+
+    return repository.defaultTheme(darkFallback
+        ? KSyntaxHighlighting::Repository::DarkTheme
+        : KSyntaxHighlighting::Repository::LightTheme);
+}
+
+QString SyntaxHighlighter::normalizedThemeName(const QString& themeId) const
+{
+    if (themeId == QStringLiteral("github-dark")) {
+        return QStringLiteral("GitHub Dark");
+    }
+    if (themeId == QStringLiteral("github-light")) {
+        return QStringLiteral("GitHub Light");
+    }
+    if (themeId == QStringLiteral("darcula")) {
+        return QStringLiteral("Dracula");
+    }
+    if (themeId == QStringLiteral("monokai")) {
+        return QStringLiteral("Monokai");
+    }
+    return themeId;
 }
