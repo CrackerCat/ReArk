@@ -95,8 +95,8 @@
         <translation>英文</translation>
     </message>
     <message>
-        <source>Chinese</source>
-        <translation>中文</translation>
+        <source>Simple Chinese</source>
+        <translation>简体中文</translation>
     </message>
     <message>
         <source>Exit</source>

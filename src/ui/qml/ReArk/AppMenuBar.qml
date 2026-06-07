@@ -255,15 +255,24 @@ Rectangle {
                 Action {
                     text: qsTr("English")
                     checkable: true
-                    checked: languageController.currentLanguage === "en_US"
-                    onTriggered: languageController.resetLanguage()
+                    checked: languageController.hasUserLanguage
+                             && languageController.currentLanguage === "en_US"
+                    onTriggered: languageController.switchLanguage("en_US")
                 }
 
                 Action {
-                    text: qsTr("Chinese")
+                    text: qsTr("Simple Chinese")
                     checkable: true
-                    checked: languageController.currentLanguage === "zh_CN"
+                    checked: languageController.hasUserLanguage
+                             && languageController.currentLanguage === "zh_CN"
                     onTriggered: languageController.switchLanguage("zh_CN")
+                }
+
+                Action {
+                    text: qsTr("System")
+                    checkable: true
+                    checked: !languageController.hasUserLanguage
+                    onTriggered: languageController.clearLanguageOverride()
                 }
             }
         }
