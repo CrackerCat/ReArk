@@ -110,7 +110,7 @@ ApplicationWindow {
                 }
 
                 Text {
-                    text: qsTr("Build Date")
+                    text: qsTr("Date")
                     font.pointSize: 10
                     color: aboutWindow.secondaryTextColor
                 }

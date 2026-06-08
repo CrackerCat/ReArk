@@ -12,8 +12,8 @@
         <translation>版本</translation>
     </message>
     <message>
-        <source>Build Date</source>
-        <translation>构建日期</translation>
+        <source>Date</source>
+        <translation>日期</translation>
     </message>
     <message>
         <source>Author</source>
