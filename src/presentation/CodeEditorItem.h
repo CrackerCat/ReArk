@@ -7,6 +7,7 @@
 #include <QQmlEngine>
 #include <QElapsedTimer>
 #include <QStringView>
+#include <QVariantMap>
 #include <QVector>
 
 #include <memory>
@@ -26,6 +27,11 @@ class CodeEditorItem : public QQuickPaintedItem {
     Q_PROPERTY(qreal documentWidth READ documentWidth NOTIFY documentMetricsChanged)
     Q_PROPERTY(qreal documentHeight READ documentHeight NOTIFY documentMetricsChanged)
     Q_PROPERTY(bool hasSelection READ hasSelection NOTIFY selectionChanged)
+    Q_PROPERTY(int searchResultCount READ searchResultCount NOTIFY searchResultsChanged)
+    Q_PROPERTY(int activeSearchResult READ activeSearchResult NOTIFY searchResultsChanged)
+    Q_PROPERTY(bool searchPatternValid READ searchPatternValid NOTIFY searchResultsChanged)
+    Q_PROPERTY(bool searchLimited READ searchLimited NOTIFY searchResultsChanged)
+    Q_PROPERTY(QString searchError READ searchError NOTIFY searchResultsChanged)
 
 public:
     explicit CodeEditorItem(QQuickItem* parent = nullptr);
@@ -48,11 +54,21 @@ public:
     [[nodiscard]] qreal documentWidth() const;
     [[nodiscard]] qreal documentHeight() const;
     [[nodiscard]] bool hasSelection() const;
+    [[nodiscard]] int searchResultCount() const;
+    [[nodiscard]] int activeSearchResult() const;
+    [[nodiscard]] bool searchPatternValid() const;
+    [[nodiscard]] bool searchLimited() const;
+    [[nodiscard]] QString searchError() const;
 
     Q_INVOKABLE void copySelection() const;
     Q_INVOKABLE void selectAll();
     Q_INVOKABLE void selectCurrentLine();
     Q_INVOKABLE void clearSelection();
+    Q_INVOKABLE QVariantMap selectRange(int start, int end);
+    Q_INVOKABLE QVariantMap updateSearch(const QString& query, bool matchCase, bool wholeWord, bool regularExpression);
+    Q_INVOKABLE QVariantMap moveSearchResult(int direction);
+    Q_INVOKABLE QVariantMap activateSearchResult(int index);
+    Q_INVOKABLE void clearSearch();
 
     void paint(QPainter* painter) override;
 
@@ -73,6 +89,7 @@ signals:
     void scrollYChanged();
     void documentMetricsChanged();
     void selectionChanged();
+    void searchResultsChanged();
 
 private:
     enum class CursorMove {
@@ -88,6 +105,11 @@ private:
         NextWord
     };
 
+    struct SearchMatch {
+        int start = 0;
+        int end = 0;
+    };
+
     void rebuildDocument();
     void rebuildLineIndex();
     void refreshSyntaxHighlighter();
@@ -98,6 +120,11 @@ private:
     void moveCursor(CursorMove operation, bool keepAnchor);
     void moveCursorByPage(int direction, bool keepAnchor);
     void selectLineAt(int position);
+    void rebuildSearchMatches();
+    void appendSearchMatch(int start, int end);
+    [[nodiscard]] bool isWholeWordMatch(int start, int end) const;
+    [[nodiscard]] int searchResultIndexAtOrAfter(int position) const;
+    [[nodiscard]] QVariantMap searchResultBounds(int index);
     [[nodiscard]] bool shouldTreatAsTripleClick(const QPointF& point) const;
     [[nodiscard]] int visibleLineCount() const;
     void notifySelectionChanged(bool previousHasSelection);
@@ -115,7 +142,7 @@ private:
     [[nodiscard]] int previousWordPosition(int position) const;
     [[nodiscard]] int nextWordPosition(int position) const;
     [[nodiscard]] static bool isWordCharacter(QChar ch);
-    [[nodiscard]] static QString expandedTabs(QStringView text);
+    [[nodiscard]] static QString expandedTabs(QStringView text, int startColumn);
 
     std::unique_ptr<CodeLineHighlighter> syntaxHighlighter_;
     QString text_;
@@ -134,6 +161,15 @@ private:
     qreal documentHeight_ = 0.0;
     int selectionAnchor_ = -1;
     int selectionPosition_ = -1;
+    QString searchQuery_;
+    bool searchMatchCase_ = false;
+    bool searchWholeWord_ = false;
+    bool searchRegularExpression_ = false;
+    bool searchPatternValid_ = true;
+    bool searchLimited_ = false;
+    QString searchError_;
+    QVector<SearchMatch> searchMatches_;
+    int activeSearchResult_ = -1;
     bool selecting_ = false;
     QElapsedTimer doubleClickTimer_;
     QPointF lastDoubleClickPoint_;
@@ -146,6 +182,8 @@ private:
     QColor currentLineColor_;
     QColor selectionColor_;
     QColor selectedTextColor_;
+    QColor searchMatchColor_;
+    QColor activeSearchMatchColor_;
 };
 
 #endif // REARK_CODE_EDITOR_ITEM_H

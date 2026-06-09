@@ -34,7 +34,7 @@ Rectangle {
         }
 
         Label {
-            text: qsTr("v%1").arg(version)
+            text: qsTr("ReArk v%1").arg(version)
             color: secondaryTextColor
             font.pixelSize: 12
         }

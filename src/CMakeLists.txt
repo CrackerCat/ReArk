@@ -86,6 +86,12 @@ qt_add_resources(${PROJECT_NAME} "icons"
     PREFIX "/icons"
     BASE "${CMAKE_SOURCE_DIR}/resources/icons"
     FILES
+        "${CMAKE_SOURCE_DIR}/resources/icons/chevron-down.svg"
+        "${CMAKE_SOURCE_DIR}/resources/icons/chevron-up.svg"
+        "${CMAKE_SOURCE_DIR}/resources/icons/close-small.svg"
+        "${CMAKE_SOURCE_DIR}/resources/icons/find-match-case.svg"
+        "${CMAKE_SOURCE_DIR}/resources/icons/find-regex.svg"
+        "${CMAKE_SOURCE_DIR}/resources/icons/find-whole-word.svg"
         "${CMAKE_SOURCE_DIR}/resources/icons/folder-open-white.svg"
         "${CMAKE_SOURCE_DIR}/resources/icons/github.svg"
         "${CMAKE_SOURCE_DIR}/resources/icons/github-white.svg"
@@ -93,6 +99,8 @@ qt_add_resources(${PROJECT_NAME} "icons"
         "${CMAKE_SOURCE_DIR}/resources/icons/issue-white.svg"
         "${CMAKE_SOURCE_DIR}/resources/icons/trash-muted.svg"
         "${CMAKE_SOURCE_DIR}/resources/icons/upload-muted.svg"
+        "${CMAKE_SOURCE_DIR}/resources/icons/website.svg"
+        "${CMAKE_SOURCE_DIR}/resources/icons/website-white.svg"
 )
 
 target_link_libraries(${PROJECT_NAME} PRIVATE

@@ -503,60 +503,65 @@ Rectangle {
                                 id: fileViewGroup
                             }
 
-                            ToolButton {
-                                ButtonGroup.group: fileViewGroup
-                                checkable: true
-                                checked: root.textViewMode === "raw"
-                                text: root.activeSupportsDisassembly
-                                      ? qsTr("Decompiled")
-                                      : root.activeIsJson ? qsTr("Raw") : qsTr("Text")
-                                implicitWidth: root.activeSupportsDisassembly ? 96 : 58
-                                implicitHeight: 24
-                                padding: 0
-                                onClicked: root.textViewMode = "raw"
-                            }
+                            Row {
+                                spacing: 0
+                                Layout.preferredHeight: 24
 
-                            ToolButton {
-                                ButtonGroup.group: fileViewGroup
-                                checkable: true
-                                checked: root.textViewMode === "formatted"
-                                visible: root.activeIsJson && !root.activeSupportsDisassembly
-                                text: qsTr("Formatted")
-                                implicitWidth: 92
-                                implicitHeight: 24
-                                padding: 0
-                                onClicked: {
-                                    root.refreshFormattedJson()
-                                    root.textViewMode = "formatted"
+                                ToolButton {
+                                    ButtonGroup.group: fileViewGroup
+                                    checkable: true
+                                    checked: root.textViewMode === "raw"
+                                    text: root.activeSupportsDisassembly
+                                          ? qsTr("Decompiled")
+                                          : root.activeIsJson ? qsTr("Raw") : qsTr("Text")
+                                    implicitWidth: root.activeSupportsDisassembly ? 72 : 52
+                                    implicitHeight: 24
+                                    padding: 0
+                                    onClicked: root.textViewMode = "raw"
                                 }
-                            }
 
-                            ToolButton {
-                                ButtonGroup.group: fileViewGroup
-                                checkable: true
-                                checked: root.textViewMode === "binary"
-                                visible: root.activeIsResourceIndex && !root.activeSupportsDisassembly
-                                text: qsTr("Binary")
-                                implicitWidth: 72
-                                implicitHeight: 24
-                                padding: 0
-                                onClicked: root.textViewMode = "binary"
-                            }
+                                ToolButton {
+                                    ButtonGroup.group: fileViewGroup
+                                    checkable: true
+                                    checked: root.textViewMode === "formatted"
+                                    visible: root.activeIsJson && !root.activeSupportsDisassembly
+                                    text: qsTr("Formatted")
+                                    implicitWidth: 80
+                                    implicitHeight: 24
+                                    padding: 0
+                                    onClicked: {
+                                        root.refreshFormattedJson()
+                                        root.textViewMode = "formatted"
+                                    }
+                                }
 
-                            ToolButton {
-                                ButtonGroup.group: fileViewGroup
-                                checkable: true
-                                checked: root.textViewMode === "disassembly"
-                                visible: root.activeSupportsDisassembly
-                                text: decompilerController.activeDisassemblyLoading
-                                      ? qsTr("Disassembling")
-                                      : qsTr("Disassembly")
-                                implicitWidth: 112
-                                implicitHeight: 24
-                                padding: 0
-                                onClicked: {
-                                    root.textViewMode = "disassembly"
-                                    decompilerController.loadActiveDisassembly()
+                                ToolButton {
+                                    ButtonGroup.group: fileViewGroup
+                                    checkable: true
+                                    checked: root.textViewMode === "binary"
+                                    visible: root.activeIsResourceIndex && !root.activeSupportsDisassembly
+                                    text: qsTr("Hex")
+                                    implicitWidth: 60
+                                    implicitHeight: 24
+                                    padding: 0
+                                    onClicked: root.textViewMode = "binary"
+                                }
+
+                                ToolButton {
+                                    ButtonGroup.group: fileViewGroup
+                                    checkable: true
+                                    checked: root.textViewMode === "disassembly"
+                                    visible: root.activeSupportsDisassembly
+                                    text: decompilerController.activeDisassemblyLoading
+                                          ? qsTr("Disassembling")
+                                          : qsTr("Disassembly")
+                                    implicitWidth: 72
+                                    implicitHeight: 24
+                                    padding: 0
+                                    onClicked: {
+                                        root.textViewMode = "disassembly"
+                                        decompilerController.loadActiveDisassembly()
+                                    }
                                 }
                             }
 

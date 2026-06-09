@@ -45,7 +45,7 @@ Rectangle {
                     Layout.fillWidth: true
                     text: root.hexModel && root.hexModel.path
                           ? root.hexModel.path
-                          : qsTr("Binary resource")
+                          : qsTr("Hex view")
                     color: Material.foreground
                     font.pixelSize: 13
                     font.bold: true

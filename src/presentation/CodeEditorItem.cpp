@@ -10,7 +10,9 @@
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QRegularExpression>
 #include <QStringList>
+#include <QStringMatcher>
 #include <QStyleHints>
 
 #include <algorithm>
@@ -30,6 +32,7 @@ constexpr int kTabColumns = 4;
 constexpr qsizetype kHighlightCharacterLimit = 1'500'000;
 constexpr int kHighlightLineLimit = 30'000;
 constexpr int kMaxSynchronousHighlightCatchUpLines = 256;
+constexpr int kMaxSearchMatches = 20'000;
 
 struct HighlightSegment {
     int start = 0;
@@ -49,6 +52,37 @@ QFont editorFont()
 int tabAdvance(int column)
 {
     return kTabColumns - (column % kTabColumns);
+}
+
+bool isWideCodepoint(uint ucs4)
+{
+    return (ucs4 >= 0x1100 && ucs4 <= 0x115F)
+        || (ucs4 >= 0x2329 && ucs4 <= 0x232A)
+        || (ucs4 >= 0x2E80 && ucs4 <= 0xA4CF)
+        || (ucs4 >= 0xAC00 && ucs4 <= 0xD7A3)
+        || (ucs4 >= 0xF900 && ucs4 <= 0xFAFF)
+        || (ucs4 >= 0xFE10 && ucs4 <= 0xFE19)
+        || (ucs4 >= 0xFE30 && ucs4 <= 0xFE6F)
+        || (ucs4 >= 0xFF00 && ucs4 <= 0xFF60)
+        || (ucs4 >= 0xFFE0 && ucs4 <= 0xFFE6)
+        || (ucs4 >= 0x1F300 && ucs4 <= 0x1FAFF);
+}
+
+int characterAdvanceColumns(QStringView text, int index)
+{
+    const QChar ch = text.at(index);
+    if (ch.isLowSurrogate()) {
+        return 0;
+    }
+    if (ch.isHighSurrogate() && index + 1 < text.size() && text.at(index + 1).isLowSurrogate()) {
+        return isWideCodepoint(QChar::surrogateToUcs4(ch, text.at(index + 1))) ? 2 : 1;
+    }
+    return isWideCodepoint(ch.unicode()) ? 2 : 1;
+}
+
+int characterAdvanceColumns(const QString& text, int index)
+{
+    return characterAdvanceColumns(QStringView(text), index);
 }
 
 int textLength(const QString& text)
@@ -425,6 +459,31 @@ bool CodeEditorItem::hasSelection() const
     return selectionAnchor_ >= 0 && selectionPosition_ >= 0 && selectionAnchor_ != selectionPosition_;
 }
 
+int CodeEditorItem::searchResultCount() const
+{
+    return static_cast<int>(searchMatches_.size());
+}
+
+int CodeEditorItem::activeSearchResult() const
+{
+    return activeSearchResult_;
+}
+
+bool CodeEditorItem::searchPatternValid() const
+{
+    return searchPatternValid_;
+}
+
+bool CodeEditorItem::searchLimited() const
+{
+    return searchLimited_;
+}
+
+QString CodeEditorItem::searchError() const
+{
+    return searchError_;
+}
+
 void CodeEditorItem::copySelection() const
 {
     if (!hasSelection()) {
@@ -465,6 +524,110 @@ void CodeEditorItem::clearSelection()
     notifySelectionChanged(previousHasSelection);
 }
 
+QVariantMap CodeEditorItem::selectRange(int start, int end)
+{
+    const bool previousHasSelection = hasSelection();
+    const int length = textLength(text_);
+    start = std::clamp(start, 0, length);
+    end = std::clamp(end, start, length);
+
+    selectionAnchor_ = start;
+    selectionPosition_ = end;
+    update();
+    notifySelectionChanged(previousHasSelection);
+
+    const int line = lineForPosition(start);
+    const int startColumn = visualColumnForPosition(line, start);
+    const int endColumn = visualColumnForPosition(line, end);
+    const qreal gutter = gutterWidth();
+    const qreal x = gutter + kLeftPadding + static_cast<qreal>(startColumn) * characterWidth_;
+    const qreal y = kTopPadding + static_cast<qreal>(line) * lineHeight_;
+    const qreal width = std::max<qreal>(
+        characterWidth_,
+        static_cast<qreal>(std::max(1, endColumn - startColumn)) * characterWidth_);
+
+    return {
+        { QStringLiteral("x"), x },
+        { QStringLiteral("y"), y },
+        { QStringLiteral("width"), width },
+        { QStringLiteral("height"), lineHeight_ },
+        { QStringLiteral("line"), line },
+    };
+}
+
+QVariantMap CodeEditorItem::updateSearch(const QString& query, bool matchCase, bool wholeWord, bool regularExpression)
+{
+    searchQuery_ = query;
+    searchMatchCase_ = matchCase;
+    searchWholeWord_ = wholeWord;
+    searchRegularExpression_ = regularExpression;
+    rebuildSearchMatches();
+
+    if (!searchMatches_.isEmpty()) {
+        const int cursorPosition = selectionPosition_ >= 0 ? selectionPosition_ : 0;
+        activeSearchResult_ = searchResultIndexAtOrAfter(cursorPosition);
+    } else {
+        activeSearchResult_ = -1;
+        clearSelection();
+    }
+
+    emit searchResultsChanged();
+    update();
+    return searchResultBounds(activeSearchResult_);
+}
+
+QVariantMap CodeEditorItem::moveSearchResult(int direction)
+{
+    if (searchMatches_.isEmpty()) {
+        activeSearchResult_ = -1;
+        emit searchResultsChanged();
+        return {};
+    }
+
+    if (activeSearchResult_ < 0 || activeSearchResult_ >= searchMatches_.size()) {
+        activeSearchResult_ = direction < 0 ? searchMatches_.size() - 1 : 0;
+    } else {
+        activeSearchResult_ = (activeSearchResult_ + direction + searchMatches_.size()) % searchMatches_.size();
+    }
+
+    emit searchResultsChanged();
+    update();
+    return searchResultBounds(activeSearchResult_);
+}
+
+QVariantMap CodeEditorItem::activateSearchResult(int index)
+{
+    if (index < 0 || index >= searchMatches_.size()) {
+        return {};
+    }
+
+    activeSearchResult_ = index;
+    emit searchResultsChanged();
+    update();
+    return searchResultBounds(activeSearchResult_);
+}
+
+void CodeEditorItem::clearSearch()
+{
+    if (searchQuery_.isEmpty()
+        && searchMatches_.isEmpty()
+        && activeSearchResult_ < 0
+        && searchPatternValid_
+        && !searchLimited_
+        && searchError_.isEmpty()) {
+        return;
+    }
+
+    searchQuery_.clear();
+    searchMatches_.clear();
+    activeSearchResult_ = -1;
+    searchPatternValid_ = true;
+    searchLimited_ = false;
+    searchError_.clear();
+    emit searchResultsChanged();
+    update();
+}
+
 void CodeEditorItem::paint(QPainter* painter)
 {
     painter->fillRect(boundingRect(), editorColor_);
@@ -501,18 +664,52 @@ void CodeEditorItem::paint(QPainter* painter)
         painter->setPen(gutterTextColor_);
         painter->drawText(numberRect, Qt::AlignRight | Qt::AlignVCenter, QString::number(line + 1));
 
+        const int blockStart = lineStartPosition(line);
+        const int blockEnd = lineEndPosition(line);
+        const auto fillTextRange = [&](int start, int end, const QColor& color) {
+            start = std::clamp(start, blockStart, blockEnd);
+            end = std::clamp(end, start, blockEnd);
+            if (start >= end) {
+                return;
+            }
+
+            const int startColumn = visualColumnForPosition(line, start);
+            const int endColumn = visualColumnForPosition(line, end);
+            const qreal rangeX = gutter + kLeftPadding - scrollX_
+                + static_cast<qreal>(startColumn) * characterWidth_;
+            const qreal rangeWidth = std::max<qreal>(
+                characterWidth_,
+                static_cast<qreal>(std::max(1, endColumn - startColumn)) * characterWidth_);
+            painter->fillRect(QRectF(rangeX, y, rangeWidth, lineHeight_), color);
+        };
+
+        if (!searchMatches_.isEmpty()) {
+            const auto first = std::lower_bound(
+                searchMatches_.cbegin(),
+                searchMatches_.cend(),
+                blockStart,
+                [](const SearchMatch& match, int value) {
+                    return match.end <= value;
+                });
+            for (auto it = first; it != searchMatches_.cend() && it->start < blockEnd; ++it) {
+                const int matchIndex = static_cast<int>(std::distance(searchMatches_.cbegin(), it));
+                if (matchIndex != activeSearchResult_) {
+                    fillTextRange(it->start, it->end, searchMatchColor_);
+                }
+            }
+            if (activeSearchResult_ >= 0 && activeSearchResult_ < searchMatches_.size()) {
+                const SearchMatch& activeMatch = searchMatches_.at(activeSearchResult_);
+                if (activeMatch.end > blockStart && activeMatch.start < blockEnd) {
+                    fillTextRange(activeMatch.start, activeMatch.end, activeSearchMatchColor_);
+                }
+            }
+        }
+
         if (hasTextSelection) {
-            const int blockStart = lineStartPosition(line);
-            const int blockEnd = lineEndPosition(line);
             const int start = std::max(selectionStart, blockStart);
             const int end = std::min(selectionEnd, blockEnd);
             if (start < end) {
-                const int startColumn = visualColumnForPosition(line, start);
-                const int endColumn = visualColumnForPosition(line, end);
-                const qreal selectionX = gutter + kLeftPadding - scrollX_
-                    + static_cast<qreal>(startColumn) * characterWidth_;
-                const qreal selectionWidth = static_cast<qreal>(endColumn - startColumn) * characterWidth_;
-                painter->fillRect(QRectF(selectionX, y, selectionWidth, lineHeight_), selectionColor_);
+                fillTextRange(start, end, selectionColor_);
             } else if (selectionStart <= blockEnd && selectionEnd > blockEnd && blockEnd == blockStart) {
                 const qreal selectionX = gutter + kLeftPadding - scrollX_;
                 painter->fillRect(QRectF(selectionX, y, characterWidth_, lineHeight_), selectionColor_);
@@ -544,7 +741,7 @@ void CodeEditorItem::paint(QPainter* painter)
             painter->drawText(QPointF(
                                   gutter + kLeftPadding - scrollX_ + static_cast<qreal>(column) * characterWidth_,
                                   y + lineAscent_),
-                expandedTabs(text.mid(start, end - start)));
+                expandedTabs(text.mid(start, end - start), column));
         };
 
         const auto segments = syntaxHighlighter_ != nullptr
@@ -735,6 +932,15 @@ void CodeEditorItem::rebuildDocument()
     selectionAnchor_ = -1;
     selectionPosition_ = -1;
     selecting_ = false;
+    if (!searchQuery_.isEmpty()) {
+        rebuildSearchMatches();
+        activeSearchResult_ = searchMatches_.isEmpty() ? -1 : 0;
+        emit searchResultsChanged();
+    } else if (!searchMatches_.isEmpty()) {
+        searchMatches_.clear();
+        activeSearchResult_ = -1;
+        emit searchResultsChanged();
+    }
     refreshMetrics();
     update();
 }
@@ -758,7 +964,7 @@ void CodeEditorItem::rebuildLineIndex()
         } else if (ch == QLatin1Char('\t')) {
             currentColumns += tabAdvance(currentColumns);
         } else {
-            ++currentColumns;
+            currentColumns += characterAdvanceColumns(text_, i);
         }
     }
     longestLineColumns_ = std::max(longestLineColumns_, currentColumns);
@@ -802,6 +1008,8 @@ void CodeEditorItem::refreshPalette()
     currentLineColor_ = theme.currentLine;
     selectionColor_ = theme.selection;
     selectedTextColor_ = theme.selectedText;
+    searchMatchColor_ = darkTheme_ ? QColor(188, 140, 36, 78) : QColor(255, 211, 79, 118);
+    activeSearchMatchColor_ = darkTheme_ ? QColor(255, 183, 38, 145) : QColor(255, 176, 0, 170);
 }
 
 void CodeEditorItem::refreshTextMetrics()
@@ -847,6 +1055,134 @@ void CodeEditorItem::selectLineAt(int position)
     const int line = lineForPosition(position);
     selectionAnchor_ = lineStartPosition(line);
     selectionPosition_ = lineEndPosition(line);
+}
+
+void CodeEditorItem::rebuildSearchMatches()
+{
+    searchMatches_.clear();
+    searchPatternValid_ = true;
+    searchLimited_ = false;
+    searchError_.clear();
+
+    if (searchQuery_.isEmpty() || text_.isEmpty()) {
+        activeSearchResult_ = -1;
+        return;
+    }
+
+    if (searchRegularExpression_) {
+        QRegularExpression::PatternOptions options = QRegularExpression::UseUnicodePropertiesOption;
+        if (!searchMatchCase_) {
+            options |= QRegularExpression::CaseInsensitiveOption;
+        }
+
+        const QRegularExpression expression(searchQuery_, options);
+        if (!expression.isValid()) {
+            searchPatternValid_ = false;
+            searchError_ = expression.errorString();
+            activeSearchResult_ = -1;
+            return;
+        }
+
+        QRegularExpressionMatchIterator iterator = expression.globalMatch(text_);
+        while (iterator.hasNext()) {
+            const QRegularExpressionMatch match = iterator.next();
+            const int start = match.capturedStart();
+            const int end = match.capturedEnd();
+            if (start < 0 || end <= start) {
+                continue;
+            }
+            if (searchWholeWord_ && !isWholeWordMatch(start, end)) {
+                continue;
+            }
+            appendSearchMatch(start, end);
+            if (searchLimited_) {
+                break;
+            }
+        }
+        return;
+    }
+
+    const Qt::CaseSensitivity caseSensitivity = searchMatchCase_ ? Qt::CaseSensitive : Qt::CaseInsensitive;
+    const QStringMatcher matcher(searchQuery_, caseSensitivity);
+    const int queryLength = textLength(searchQuery_);
+    int index = 0;
+    while ((index = matcher.indexIn(text_, index)) >= 0) {
+        const int end = index + queryLength;
+        if (!searchWholeWord_ || isWholeWordMatch(index, end)) {
+            appendSearchMatch(index, end);
+            if (searchLimited_) {
+                break;
+            }
+        }
+        index = std::max(index + queryLength, index + 1);
+    }
+}
+
+void CodeEditorItem::appendSearchMatch(int start, int end)
+{
+    if (searchMatches_.size() >= kMaxSearchMatches) {
+        searchLimited_ = true;
+        return;
+    }
+
+    start = std::clamp(start, 0, textLength(text_));
+    end = std::clamp(end, start, textLength(text_));
+    if (start < end) {
+        searchMatches_.append(SearchMatch { start, end });
+    }
+}
+
+bool CodeEditorItem::isWholeWordMatch(int start, int end) const
+{
+    start = std::clamp(start, 0, textLength(text_));
+    end = std::clamp(end, start, textLength(text_));
+    const bool leftOk = start == 0 || !isWordCharacter(text_.at(start - 1));
+    const bool rightOk = end >= textLength(text_) || !isWordCharacter(text_.at(end));
+    return leftOk && rightOk;
+}
+
+int CodeEditorItem::searchResultIndexAtOrAfter(int position) const
+{
+    if (searchMatches_.isEmpty()) {
+        return -1;
+    }
+
+    position = std::clamp(position, 0, textLength(text_));
+    const auto it = std::lower_bound(
+        searchMatches_.cbegin(),
+        searchMatches_.cend(),
+        position,
+        [](const SearchMatch& match, int value) {
+            return match.start < value;
+        });
+    if (it == searchMatches_.cend()) {
+        return 0;
+    }
+    return static_cast<int>(std::distance(searchMatches_.cbegin(), it));
+}
+
+QVariantMap CodeEditorItem::searchResultBounds(int index)
+{
+    if (index < 0 || index >= searchMatches_.size()) {
+        return {
+            { QStringLiteral("valid"), false },
+            { QStringLiteral("count"), searchMatches_.size() },
+            { QStringLiteral("activeIndex"), activeSearchResult_ },
+            { QStringLiteral("patternValid"), searchPatternValid_ },
+            { QStringLiteral("limited"), searchLimited_ },
+            { QStringLiteral("error"), searchError_ },
+        };
+    }
+
+    const SearchMatch& match = searchMatches_.at(index);
+    QVariantMap bounds = selectRange(match.start, match.end);
+    bounds.insert(QStringLiteral("valid"), true);
+    bounds.insert(QStringLiteral("count"), searchMatches_.size());
+    bounds.insert(QStringLiteral("activeIndex"), activeSearchResult_);
+    bounds.insert(QStringLiteral("patternValid"), searchPatternValid_);
+    bounds.insert(QStringLiteral("limited"), searchLimited_);
+    bounds.insert(QStringLiteral("error"), searchError_);
+    return bounds;
 }
 
 bool CodeEditorItem::shouldTreatAsTripleClick(const QPointF& point) const
@@ -964,7 +1300,7 @@ int CodeEditorItem::visualColumnForPosition(int line, int position) const
     int column = 0;
     for (int i = start; i < position; ++i) {
         const QChar ch = text_.at(i);
-        column += ch == QLatin1Char('\t') ? tabAdvance(column) : 1;
+        column += ch == QLatin1Char('\t') ? tabAdvance(column) : characterAdvanceColumns(text_, i);
     }
     return column;
 }
@@ -978,7 +1314,7 @@ int CodeEditorItem::positionForVisualColumn(int line, int visualColumn) const
     int column = 0;
     for (int i = start; i < end; ++i) {
         const QChar ch = text_.at(i);
-        const int advance = ch == QLatin1Char('\t') ? tabAdvance(column) : 1;
+        const int advance = ch == QLatin1Char('\t') ? tabAdvance(column) : characterAdvanceColumns(text_, i);
         if (visualColumn < column + advance) {
             return i;
         }
@@ -1063,20 +1399,21 @@ bool CodeEditorItem::isWordCharacter(QChar ch)
     return ch.isLetterOrNumber() || ch == QLatin1Char('_');
 }
 
-QString CodeEditorItem::expandedTabs(QStringView text)
+QString CodeEditorItem::expandedTabs(QStringView text, int startColumn)
 {
     QString expanded;
     expanded.reserve(text.size());
 
-    int column = 0;
-    for (const QChar ch : text) {
+    int column = std::max(0, startColumn);
+    for (int i = 0; i < text.size(); ++i) {
+        const QChar ch = text.at(i);
         if (ch == QLatin1Char('\t')) {
             const int spaces = tabAdvance(column);
             expanded.append(QString(spaces, QLatin1Char(' ')));
             column += spaces;
         } else {
             expanded.append(ch);
-            ++column;
+            column += characterAdvanceColumns(text, i);
         }
     }
     return expanded;

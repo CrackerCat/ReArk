@@ -9,6 +9,7 @@ Item {
     property bool directory: false
     property bool placeholder: false
     readonly property bool darkTheme: Material.theme === Material.Dark
+    readonly property bool signatureNode: name === "Package signature" || name === "APK signature"
     readonly property string extension: {
         var dot = name.lastIndexOf(".")
         return dot >= 0 ? name.substring(dot + 1).toLowerCase() : kind.toLowerCase()
@@ -18,7 +19,7 @@ Item {
         if (placeholder) {
             return darkTheme ? "#7d8792" : "#8a949d"
         }
-        if (name === "APK signature") {
+        if (signatureNode) {
             return "#d6b35d"
         }
         if (name === "Summary") {
@@ -98,7 +99,7 @@ Item {
             height: 2
             radius: 0.5
             color: root.fileColor
-            visible: root.name === "APK signature" || root.name === "Summary"
+            visible: root.signatureNode || root.name === "Summary"
         }
     }
 }

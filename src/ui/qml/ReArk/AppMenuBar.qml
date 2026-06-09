@@ -13,6 +13,8 @@ Rectangle {
     property bool menuNavigationActive: false
     property var entryPointItems: []
     readonly property bool darkTheme: Material.theme === Material.Dark
+    readonly property string tutorialUrl: "https://www.cppmore.com/category/ReArk/"
+    readonly property string issueUrl: "https://github.com/lkimuk/ReArk/issues"
 
     signal openRequested()
     signal recentFileRequested(string filePath)
@@ -482,6 +484,23 @@ Rectangle {
     CompactMenu {
         id: helpMenu
         onClosed: root.leaveMenuNavigationWhenClosed()
+
+        Action {
+            text: qsTr("User Guide")
+            onTriggered: Qt.openUrlExternally(root.tutorialUrl)
+        }
+
+        Action {
+            text: qsTr("Report Issue")
+            onTriggered: Qt.openUrlExternally(root.issueUrl)
+        }
+
+        Action {
+            text: qsTr("View License")
+            enabled: false
+        }
+
+        CompactMenuSeparator {}
 
         Action {
             text: updateController.checking ? qsTr("Checking for Updates...") : qsTr("Check for Updates")

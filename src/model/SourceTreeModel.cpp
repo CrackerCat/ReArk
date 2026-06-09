@@ -407,8 +407,10 @@ QVariantList SourceTreeModel::entryPointCandidates() const
     addFirst(tr("Summary"), [](const TreeNode& node) {
         return node.section == QStringLiteral("summary") || node.name == QStringLiteral("Summary");
     });
-    addFirst(tr("APK signature"), [](const TreeNode& node) {
-        return node.section == QStringLiteral("signature") || node.name == QStringLiteral("APK signature");
+    addFirst(tr("Package signature"), [](const TreeNode& node) {
+        return node.section == QStringLiteral("signature")
+            || node.name == QStringLiteral("Package signature")
+            || node.name == QStringLiteral("APK signature");
     });
     addFirst(tr("Module descriptor"), [](const TreeNode& node) {
         const QString path = node.path.toCaseFolded();
@@ -725,7 +727,7 @@ void SourceTreeModel::rebuildTree(std::vector<DecompiledSourceFile> files)
     };
 
     const int sourceRoot = addCategory(QStringLiteral("Source code"), true);
-    const int resourceRoot = addCategory(QStringLiteral("Resources"), true);
+    const int resourceRoot = addCategory(QStringLiteral("Package files"), true);
 
     const auto signatureFile = std::ranges::find_if(files, [](const DecompiledSourceFile& file) {
         return file.section == QStringLiteral("signature");
@@ -735,8 +737,8 @@ void SourceTreeModel::rebuildTree(std::vector<DecompiledSourceFile> files)
     });
 
     TreeNode signature;
-    signature.name = QStringLiteral("APK signature");
-    signature.path = QStringLiteral("APK signature");
+    signature.name = QStringLiteral("Package signature");
+    signature.path = QStringLiteral("Package signature");
     signature.kind = QStringLiteral("TXT");
     signature.section = QStringLiteral("signature");
     signature.depth = 0;
@@ -752,7 +754,7 @@ void SourceTreeModel::rebuildTree(std::vector<DecompiledSourceFile> files)
     } else {
         signature.kind = QStringLiteral("PLACEHOLDER");
         signature.placeholder = true;
-        signature.document = makeDocument(QStringLiteral("Waiting for Hyle APK signature API"), {}, {}, signature.kind, QStringLiteral("text"));
+        signature.document = makeDocument(QStringLiteral("Waiting for Hyle package signature API"), {}, {}, signature.kind, QStringLiteral("text"));
     }
     nodes_.push_back(std::move(signature));
 
@@ -864,7 +866,7 @@ void SourceTreeModel::rebuildTree(std::vector<DecompiledSourceFile> files)
     }
 
     if (nodes_.at(static_cast<std::size_t>(resourceRoot)).children.empty()) {
-        addPlaceholder(resourceRoot, QStringLiteral("No resources found"));
+        addPlaceholder(resourceRoot, QStringLiteral("No package files found"));
     }
 
     for (int nodeIndex = firstSourceNode; nodeIndex >= 0;) {

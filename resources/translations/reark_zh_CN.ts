@@ -36,16 +36,16 @@
         <translation>GitHub</translation>
     </message>
     <message>
-        <source>Report Issue</source>
-        <translation>反馈问题</translation>
+        <source>Official Website</source>
+        <translation>官网</translation>
     </message>
     <message>
-        <source>Professional reverse engineering tool for HarmonyOS NEXT HAP/ABC. Supports disassembly, decompilation, signature identification, and file structure browsing.</source>
-        <translation>HarmonyOS NEXT HAP/ABC 专业逆向工具，支持反汇编、反编译、签名识别、文件结构浏览。</translation>
+        <source>A professional reverse engineering tool for HarmonyOS NEXT HAP/ABC, supporting disassembly, decompilation, signature identification, package browsing, application analysis, and more.</source>
+        <translation>一款用于 HarmonyOS NEXT HAP/ABC 的专业逆向工具，支持反汇编、反编译、签名识别、包体浏览、应用分析等功能。</translation>
     </message>
     <message>
-        <source>Reverse the Ark, Reveal the Flow</source>
-        <translation>溯彼方舟，复见其流</translation>
+        <source>Reverse the Ark, Reveal the App</source>
+        <translation>Reverse the Ark, Reveal the App</translation>
     </message>
     <message>
         <source>Copyright © %1 Miles Li. All rights reserved.</source>
@@ -139,6 +139,18 @@
         <translation>入口点</translation>
     </message>
     <message>
+        <source>User Guide</source>
+        <translation>使用教程</translation>
+    </message>
+    <message>
+        <source>Report Issue</source>
+        <translation>报告问题</translation>
+    </message>
+    <message>
+        <source>View License</source>
+        <translation>查看许可</translation>
+    </message>
+    <message>
         <source>Checking for Updates...</source>
         <translation>正在检查更新...</translation>
     </message>
@@ -180,6 +192,50 @@
     <message>
         <source>Clear Selection</source>
         <translation>清除选择</translation>
+    </message>
+    <message>
+        <source>Find</source>
+        <translation>查找</translation>
+    </message>
+    <message>
+        <source>No results</source>
+        <translation>无结果</translation>
+    </message>
+    <message>
+        <source>Invalid</source>
+        <translation>无效</translation>
+    </message>
+    <message>
+        <source>%1/%2</source>
+        <translation>%1/%2</translation>
+    </message>
+    <message>
+        <source>%1+</source>
+        <translation>%1+</translation>
+    </message>
+    <message>
+        <source>Match Case</source>
+        <translation>区分大小写</translation>
+    </message>
+    <message>
+        <source>Match Whole Word</source>
+        <translation>全词匹配</translation>
+    </message>
+    <message>
+        <source>Use Regular Expression</source>
+        <translation>使用正则表达式</translation>
+    </message>
+    <message>
+        <source>Previous Match</source>
+        <translation>上一个匹配</translation>
+    </message>
+    <message>
+        <source>Next Match</source>
+        <translation>下一个匹配</translation>
+    </message>
+    <message>
+        <source>Close</source>
+        <translation>关闭</translation>
     </message>
 </context>
 <context>
@@ -228,8 +284,8 @@
 <context>
     <name>HexView</name>
     <message>
-        <source>Binary resource</source>
-        <translation>二进制资源</translation>
+        <source>Hex view</source>
+        <translation>十六进制视图</translation>
     </message>
     <message>
         <source>%1 bytes</source>
@@ -338,8 +394,8 @@
         <translation>格式化</translation>
     </message>
     <message>
-        <source>Binary</source>
-        <translation>二进制</translation>
+        <source>Hex</source>
+        <translation>十六进制</translation>
     </message>
 </context>
 <context>
@@ -420,8 +476,8 @@
         <translation>摘要</translation>
     </message>
     <message>
-        <source>APK signature</source>
-        <translation>APK 签名</translation>
+        <source>Package signature</source>
+        <translation>包签名</translation>
     </message>
     <message>
         <source>Module descriptor</source>

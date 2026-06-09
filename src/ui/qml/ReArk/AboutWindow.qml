@@ -7,9 +7,9 @@ import QtQuick.Layouts
 ApplicationWindow {
     id: aboutWindow
     width: 500
-    height: 420
+    height: 450
     minimumWidth: 450
-    minimumHeight: 400
+    minimumHeight: 430
     visible: false
     title: qsTr("About ReArk")
     modality: Qt.ApplicationModal
@@ -27,7 +27,7 @@ ApplicationWindow {
     readonly property color buttonBorderColor: darkTheme ? "#2a3542" : "#d8e0e5"
     readonly property color buttonHoverBorderColor: darkTheme ? "#344353" : "#cbd8de"
     readonly property string githubUrl: "https://github.com/lkimuk/ReArk"
-    readonly property string issuesUrl: githubUrl + "/issues"
+    readonly property string websiteUrl: "https://www.cppmore.com/"
     readonly property int copyrightStartYear: 2026
     readonly property int copyrightCurrentYear: new Date().getFullYear()
     readonly property string copyrightYearRange: copyrightCurrentYear <= copyrightStartYear
@@ -77,7 +77,7 @@ ApplicationWindow {
 
                     Text {
                         Layout.fillWidth: true
-                        text: qsTr("Reverse the Ark, Reveal the Flow")
+                        text: qsTr("Reverse the Ark, Reveal the App")
                         font.pointSize: 12
                         color: aboutWindow.secondaryTextColor
                     }
@@ -148,8 +148,8 @@ ApplicationWindow {
 
             Text {
                 Layout.fillWidth: true
-                Layout.topMargin: 4
-                text: qsTr("Professional reverse engineering tool for HarmonyOS NEXT HAP/ABC. Supports disassembly, decompilation, signature identification, and file structure browsing.")
+                Layout.topMargin: 16
+                text: qsTr("A professional reverse engineering tool for HarmonyOS NEXT HAP/ABC, supporting disassembly, decompilation, signature identification, package browsing, application analysis, and more.")
                 font.pointSize: 10
                 wrapMode: Text.WordWrap
                 lineHeight: 1.35
@@ -175,9 +175,9 @@ ApplicationWindow {
                             "url": aboutWindow.githubUrl
                         },
                         {
-                            "kind": "issue",
-                            "label": qsTr("Report Issue"),
-                            "url": aboutWindow.issuesUrl
+                            "kind": "website",
+                            "label": qsTr("Official Website"),
+                            "url": aboutWindow.websiteUrl
                         }
                     ]
 
@@ -187,9 +187,12 @@ ApplicationWindow {
                         required property var modelData
                         readonly property string iconKind: modelData.kind
                         readonly property string targetUrl: modelData.url
-                        readonly property string iconSource: contactButton.iconKind === "github"
-                                                             ? (aboutWindow.darkTheme ? "qrc:/icons/github-white.svg" : "qrc:/icons/github.svg")
-                                                             : (aboutWindow.darkTheme ? "qrc:/icons/issue-white.svg" : "qrc:/icons/issue.svg")
+                        readonly property string iconSource: {
+                            if (contactButton.iconKind === "github") {
+                                return aboutWindow.darkTheme ? "qrc:/icons/github-white.svg" : "qrc:/icons/github.svg"
+                            }
+                            return aboutWindow.darkTheme ? "qrc:/icons/website-white.svg" : "qrc:/icons/website.svg"
+                        }
                         readonly property bool hovered: contactMouse.containsMouse
 
                         Layout.preferredWidth: 42
