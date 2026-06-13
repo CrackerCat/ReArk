@@ -14,14 +14,13 @@ Rectangle {
     readonly property string language: block.language || ""
     readonly property string languageLabel: block.languageLabel || ""
     readonly property bool compact: block.compact === true
-    readonly property int lineCount: Math.max(1, block.lineCount || 1)
     readonly property color chromeColor: darkTheme ? "#111415" : "#f5f7fa"
     readonly property color headerTextColor: darkTheme ? "#90a0b4" : "#66758a"
     readonly property color hoverColor: darkTheme ? "#23292f" : "#e7edf5"
     readonly property color hairlineColor: darkTheme ? "#1f2933" : "#d9e1ec"
     readonly property real viewportHeight: compact
                                      ? 36
-                                     : Math.min(Math.max(74, lineCount * 20 + 24), 430)
+                                     : Math.min(Math.max(74, editor.documentHeight), 430)
 
     property bool copied: false
 

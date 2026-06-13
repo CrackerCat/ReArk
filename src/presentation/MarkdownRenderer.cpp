@@ -136,6 +136,17 @@ bool isSingleLinePlainBlock(const QString& code, const QString& language)
     return !trimmed.isEmpty() && !trimmed.contains(QLatin1Char('\n'));
 }
 
+QString normalizeCodeBlockText(QString code)
+{
+    code.replace(QStringLiteral("\r\n"), QStringLiteral("\n"));
+    code.replace(QLatin1Char('\r'), QLatin1Char('\n'));
+    QStringList lines = code.split(QLatin1Char('\n'), Qt::KeepEmptyParts);
+    while (!lines.isEmpty() && lines.last().trimmed().isEmpty()) {
+        lines.removeLast();
+    }
+    return lines.join(QLatin1Char('\n'));
+}
+
 QString htmlInlineCode(
     const QString& code,
     bool darkTheme)
@@ -349,14 +360,15 @@ QString renderInlineMarkdownHtml(const QString& markdown, bool darkTheme)
 QVariantMap renderCodeBlockModel(const QString& code, const QString& language, bool darkTheme)
 {
     const QString normalized = normalizedLanguage(language);
-    const QStringList lines = code.split(QLatin1Char('\n'));
+    const QString normalizedCode = normalizeCodeBlockText(code);
+    const QStringList lines = normalizedCode.split(QLatin1Char('\n'));
 
     QVariantMap block;
     block.insert(QStringLiteral("type"), QStringLiteral("code"));
     block.insert(QStringLiteral("language"), normalized);
     block.insert(QStringLiteral("languageLabel"), displayLanguage(normalized));
-    block.insert(QStringLiteral("code"), code);
-    block.insert(QStringLiteral("compact"), isSingleLinePlainBlock(code, normalized));
+    block.insert(QStringLiteral("code"), normalizedCode);
+    block.insert(QStringLiteral("compact"), isSingleLinePlainBlock(normalizedCode, normalized));
     block.insert(QStringLiteral("lineCount"), std::max(1, int(lines.size())));
     return block;
 }
