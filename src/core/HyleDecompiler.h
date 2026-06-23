@@ -10,7 +10,9 @@
 #include <QString>
 #include <QTemporaryDir>
 
+#include <map>
 #include <memory>
+#include <mutex>
 #include <stop_token>
 #include <string>
 #include <vector>
@@ -29,6 +31,9 @@ struct SessionContext {
     hyle::async::thread_pool_executor executor;
     std::stop_source stopSource;
     std::unique_ptr<QTemporaryDir> appTempDir;
+    std::unique_ptr<QTemporaryDir> abcEvidenceTempDir;
+    std::mutex abcEvidenceMutex;
+    std::map<QString, QString> abcEvidenceFiles;
     std::vector<PackageSession> packages;
 
     SessionContext();
@@ -104,6 +109,48 @@ struct DisassemblyResult {
     const QString& name,
     std::stop_token stopToken = {},
     std::size_t packageId = 0);
+[[nodiscard]] QString readAbcLiteralEvidence(
+    const std::shared_ptr<SessionContext>& context,
+    const QString& fallbackPackagePath,
+    const QString& pathOrQuery,
+    const QString& offsetText,
+    int maxChars,
+    std::stop_token stopToken = {});
+[[nodiscard]] QString searchAbcStringEvidence(
+    const std::shared_ptr<SessionContext>& context,
+    const QString& fallbackPackagePath,
+    const QString& pathOrQuery,
+    const QString& pattern,
+    int minLen,
+    int maxLen,
+    int limit,
+    int maxChars,
+    std::stop_token stopToken = {});
+[[nodiscard]] QString readAbcTreeEvidence(
+    const std::shared_ptr<SessionContext>& context,
+    const QString& fallbackPackagePath,
+    const QString& pathOrQuery,
+    int limit,
+    int maxChars,
+    std::stop_token stopToken = {});
+[[nodiscard]] QString findAbcXrefEvidence(
+    const std::shared_ptr<SessionContext>& context,
+    const QString& fallbackPackagePath,
+    const QString& pathOrQuery,
+    const QString& query,
+    const QString& kind,
+    int limit,
+    int maxChars,
+    std::stop_token stopToken = {});
+[[nodiscard]] QString findAbcCallArgumentFlowEvidence(
+    const std::shared_ptr<SessionContext>& context,
+    const QString& fallbackPackagePath,
+    const QString& pathOrQuery,
+    const QString& query,
+    const QString& kind,
+    int limit,
+    int maxChars,
+    std::stop_token stopToken = {});
 [[nodiscard]] SourceResult readResourceContent(
     const std::shared_ptr<SessionContext>& context,
     int nodeIndex,

@@ -1,6 +1,25 @@
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 
+add_library(reark_core STATIC
+    core/HyleDecompiler.cpp
+    core/HyleDecompiler.h
+    core/PerformanceTrace.cpp
+    core/PerformanceTrace.h
+    model/DocumentContent.h
+    model/SourceTreeModel.h
+)
+target_include_directories(reark_core PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
+)
+target_link_libraries(reark_core
+    PUBLIC
+        Qt6::Core
+        hyle::hyle
+    PRIVATE
+        Qt6::Gui
+)
+
 qt_add_executable(${PROJECT_NAME}
     main.cpp
     core/AppInitializer.cpp
@@ -9,9 +28,7 @@ qt_add_executable(${PROJECT_NAME}
     core/ApplicationController.h
     core/BuildInfoProvider.cpp
     core/BuildInfoProvider.h
-    core/HyleDecompiler.cpp
     core/HyleDecompiler.h
-    core/PerformanceTrace.cpp
     core/PerformanceTrace.h
     core/ResourcePreviewProvider.cpp
     core/ResourcePreviewProvider.h
@@ -133,6 +150,7 @@ qt_add_resources(${PROJECT_NAME} "legal"
 )
 
 target_link_libraries(${PROJECT_NAME} PRIVATE
+    reark_core
     Qt6::Core
     Qt6::Gui
     Qt6::Quick
@@ -343,4 +361,34 @@ else()
         $<$<CONFIG:RelWithDebInfo>:-O2>
         $<$<CONFIG:MinSizeRel>:-Os>
     )
+endif()
+
+set(REARK_ABC_EVIDENCE_SAMPLE "${CMAKE_SOURCE_DIR}/samples/Bridge.hap")
+if(NOT EXISTS "${REARK_ABC_EVIDENCE_SAMPLE}")
+    set(REARK_ABC_EVIDENCE_SAMPLE "${CMAKE_SOURCE_DIR}/samples/遥遥领先.hap")
+endif()
+
+if(BUILD_TESTING AND EXISTS "${REARK_ABC_EVIDENCE_SAMPLE}")
+    qt_add_executable(reark_hyle_abc_evidence_test
+        tests/HyleAbcEvidenceTest.cpp
+    )
+    target_include_directories(reark_hyle_abc_evidence_test PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+    target_compile_definitions(reark_hyle_abc_evidence_test PRIVATE
+        REARK_ABC_EVIDENCE_SAMPLE="${REARK_ABC_EVIDENCE_SAMPLE}"
+    )
+    target_link_libraries(reark_hyle_abc_evidence_test PRIVATE
+        reark_core
+    )
+    if(WIN32)
+        add_custom_command(TARGET reark_hyle_abc_evidence_test POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                $<TARGET_RUNTIME_DLLS:reark_hyle_abc_evidence_test>
+                $<TARGET_FILE_DIR:reark_hyle_abc_evidence_test>
+            COMMAND_EXPAND_LISTS
+        )
+    endif()
+    add_test(NAME reark_hyle_abc_evidence_test
+        COMMAND reark_hyle_abc_evidence_test "${REARK_ABC_EVIDENCE_SAMPLE}")
 endif()

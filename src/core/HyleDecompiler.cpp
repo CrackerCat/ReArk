@@ -21,6 +21,7 @@
 #include <cctype>
 #include <cstddef>
 #include <functional>
+#include <limits>
 #include <map>
 #include <optional>
 #include <string_view>
@@ -83,6 +84,14 @@ bool isAbcFile(const QString& filePath)
     return QFileInfo(filePath).suffix().compare(QStringLiteral("abc"), Qt::CaseInsensitive) == 0;
 }
 
+bool hasAbcSuffix(const std::string& path)
+{
+    constexpr std::string_view suffix = ".abc";
+    const std::string lower = toLower(path);
+    return lower.size() >= suffix.size()
+        && lower.compare(lower.size() - suffix.size(), suffix.size(), suffix) == 0;
+}
+
 bool isAppFile(const QString& filePath)
 {
     return QFileInfo(filePath).suffix().compare(QStringLiteral("app"), Qt::CaseInsensitive) == 0;
@@ -114,6 +123,124 @@ QString sanitizedTempFileName(QString value)
         value += QStringLiteral(".hap");
     }
     return value;
+}
+
+QString sanitizedEvidenceFileName(QString value)
+{
+    value.replace(QLatin1Char('\\'), QLatin1Char('/'));
+    if (value.isEmpty()) {
+        value = QStringLiteral("modules.abc");
+    }
+    for (QChar& ch : value) {
+        if (ch == QLatin1Char('/') || ch == QLatin1Char('\\') || ch == QLatin1Char(':')
+            || ch == QLatin1Char('*') || ch == QLatin1Char('?') || ch == QLatin1Char('"')
+            || ch == QLatin1Char('<') || ch == QLatin1Char('>') || ch == QLatin1Char('|')) {
+            ch = QLatin1Char('_');
+        }
+    }
+    if (!value.endsWith(QStringLiteral(".abc"), Qt::CaseInsensitive)) {
+        value += QStringLiteral(".abc");
+    }
+    return value;
+}
+
+QString hexOffset(std::uint32_t offset)
+{
+    return QStringLiteral("0x%1")
+        .arg(offset, 8, 16, QLatin1Char('0'))
+        .toUpper();
+}
+
+QString bytecodeReferenceKindName(hyle::hap::bytecode_reference_kind kind)
+{
+    using hyle::hap::bytecode_reference_kind;
+    switch (kind) {
+    case bytecode_reference_kind::string:
+        return QStringLiteral("string");
+    case bytecode_reference_kind::method:
+        return QStringLiteral("method");
+    case bytecode_reference_kind::literal:
+        return QStringLiteral("literal");
+    }
+    return QStringLiteral("unknown");
+}
+
+std::optional<hyle::hap::bytecode_reference_kind> parseBytecodeReferenceKind(const QString& value)
+{
+    using hyle::hap::bytecode_reference_kind;
+    const QString folded = value.trimmed().toCaseFolded();
+    if (folded.isEmpty() || folded == QStringLiteral("any")) {
+        return std::nullopt;
+    }
+    if (folded == QStringLiteral("string")) {
+        return bytecode_reference_kind::string;
+    }
+    if (folded == QStringLiteral("method")) {
+        return bytecode_reference_kind::method;
+    }
+    if (folded == QStringLiteral("literal")) {
+        return bytecode_reference_kind::literal;
+    }
+    return std::nullopt;
+}
+
+std::optional<std::uint32_t> parseAbcOffset(QString value)
+{
+    value = value.trimmed();
+    if (value.startsWith(QStringLiteral("literal@"), Qt::CaseInsensitive)) {
+        value = value.mid(8);
+    }
+    bool ok = false;
+    const int base = value.startsWith(QStringLiteral("0x"), Qt::CaseInsensitive) ? 16 : 10;
+    const qulonglong parsed = value.toULongLong(&ok, base);
+    if (!ok || parsed > std::numeric_limits<std::uint32_t>::max()) {
+        return std::nullopt;
+    }
+    return static_cast<std::uint32_t>(parsed);
+}
+
+QString rawHex(const std::vector<std::byte>& bytes, qsizetype maxBytes = 64)
+{
+    if (bytes.empty()) {
+        return {};
+    }
+    const qsizetype size = std::min<qsizetype>(static_cast<qsizetype>(bytes.size()), maxBytes);
+    QByteArray data(reinterpret_cast<const char*>(bytes.data()), size);
+    QString text = QString::fromLatin1(data.toHex());
+    if (static_cast<qsizetype>(bytes.size()) > maxBytes) {
+        text += QStringLiteral("...");
+    }
+    return text;
+}
+
+QString quotedPreview(QString value, int maxChars = 220)
+{
+    value.replace(QLatin1Char('\\'), QStringLiteral("\\\\"));
+    value.replace(QLatin1Char('"'), QStringLiteral("\\\""));
+    value.replace(QLatin1Char('\n'), QStringLiteral("\\n"));
+    value.replace(QLatin1Char('\r'), QStringLiteral("\\r"));
+    value.replace(QLatin1Char('\t'), QStringLiteral("\\t"));
+    if (value.size() > maxChars) {
+        value = value.left(maxChars) + QStringLiteral("...");
+    }
+    return QStringLiteral("\"%1\"").arg(value);
+}
+
+QString boundedEvidenceText(QString text, int maxChars)
+{
+    constexpr int kDefaultMaxChars = 24000;
+    constexpr int kHardMaxChars = 120000;
+    if (maxChars <= 0) {
+        maxChars = kDefaultMaxChars;
+    }
+    maxChars = std::clamp(maxChars, 1000, kHardMaxChars);
+    if (text.size() <= maxChars) {
+        return text;
+    }
+    return text.left(maxChars)
+        + QStringLiteral("\n\n[truncated: %1 of %2 characters shown]")
+              .arg(maxChars)
+              .arg(text.size());
 }
 
 QString normalizeSourceContent(QString content);
@@ -748,6 +875,190 @@ QString writeExtractedHap(
     return {};
 }
 
+struct AbcEvidenceTarget {
+    QString displayPath;
+    QString filePath;
+    QString error;
+};
+
+bool matchesAbcQuery(const QString& displayPath, const QString& rawPath, const QString& query)
+{
+    if (query.trimmed().isEmpty()) {
+        return true;
+    }
+    const QString foldedQuery = query.trimmed().toCaseFolded();
+    const QString foldedDisplay = displayPath.toCaseFolded();
+    const QString foldedRaw = rawPath.toCaseFolded();
+    const QString foldedName = QFileInfo(rawPath).fileName().toCaseFolded();
+    return foldedDisplay == foldedQuery
+        || foldedRaw == foldedQuery
+        || foldedName == foldedQuery
+        || foldedDisplay.contains(foldedQuery)
+        || foldedRaw.contains(foldedQuery);
+}
+
+int abcQueryScore(const QString& displayPath, const QString& rawPath, const QString& query)
+{
+    if (query.trimmed().isEmpty()) {
+        return 1;
+    }
+    const QString foldedQuery = query.trimmed().toCaseFolded();
+    const QString foldedDisplay = displayPath.toCaseFolded();
+    const QString foldedRaw = rawPath.toCaseFolded();
+    const QString foldedName = QFileInfo(rawPath).fileName().toCaseFolded();
+    if (foldedDisplay == foldedQuery || foldedRaw == foldedQuery) {
+        return 100;
+    }
+    if (foldedName == foldedQuery) {
+        return 90;
+    }
+    if (foldedDisplay.contains(foldedQuery)) {
+        return 60;
+    }
+    if (foldedRaw.contains(foldedQuery)) {
+        return 50;
+    }
+    return -1;
+}
+
+QString ensureAbcEvidenceTempDir(const std::shared_ptr<HyleDecompiler::SessionContext>& context)
+{
+    if (!context) {
+        return QObject::tr("Decompiler session is not available.");
+    }
+    if (!context->abcEvidenceTempDir) {
+        context->abcEvidenceTempDir = std::make_unique<QTemporaryDir>();
+    }
+    if (!context->abcEvidenceTempDir->isValid()) {
+        return QObject::tr("Create temporary ABC evidence directory failed.");
+    }
+    return {};
+}
+
+AbcEvidenceTarget resolveAbcEvidenceTarget(
+    const std::shared_ptr<HyleDecompiler::SessionContext>& context,
+    const QString& fallbackPackagePath,
+    const QString& pathOrQuery,
+    std::stop_token stopToken)
+{
+    if (stopToken.stop_requested() || (context && context->stopToken().stop_requested())) {
+        return { {}, {}, QObject::tr("Operation cancelled.") };
+    }
+
+    const QString query = pathOrQuery.trimmed();
+    const QFileInfo queryFile(query);
+    if (!query.isEmpty() && queryFile.exists() && queryFile.isFile() && isAbcFile(queryFile.filePath())) {
+        return { queryFile.filePath(), queryFile.filePath(), {} };
+    }
+
+    const QFileInfo fallbackFile(fallbackPackagePath);
+    if (fallbackFile.exists() && fallbackFile.isFile() && isAbcFile(fallbackFile.filePath())
+        && matchesAbcQuery(fallbackFile.filePath(), fallbackFile.fileName(), query)) {
+        return { fallbackFile.filePath(), fallbackFile.filePath(), {} };
+    }
+
+    struct Candidate {
+        HyleDecompiler::PackageSession* package = nullptr;
+        const hyle::hap::hap_resource_entry* resource = nullptr;
+        QString displayPath;
+        std::size_t packageId = 0;
+        int score = -1;
+    };
+
+    Candidate best;
+    if (context) {
+        for (std::size_t packageId = 0; packageId < context->packages.size(); ++packageId) {
+            auto& package = context->packages.at(packageId);
+            for (const auto& resource : package.session.resources()) {
+                if (resource.is_directory
+                    || !(resource.is_abc || resource.kind == hyle::hap::hap_resource_kind::abc || hasAbcSuffix(resource.path))) {
+                    continue;
+                }
+
+                const QString rawPath = fromUtf8(resource.path);
+                const QString displayPath = package.displayName.isEmpty()
+                    ? rawPath
+                    : package.displayName + QLatin1Char('/') + rawPath;
+                const int score = abcQueryScore(displayPath, rawPath, query);
+                if (score > best.score) {
+                    best = { &package, &resource, displayPath, packageId, score };
+                }
+            }
+        }
+    }
+
+    if (!best.package || !best.resource || best.score < 0) {
+        return {
+            {},
+            {},
+            query.isEmpty()
+                ? QObject::tr("No ABC file is available in the current target.")
+                : QObject::tr("No ABC file matched: %1").arg(pathOrQuery)
+        };
+    }
+
+    const QString tempError = ensureAbcEvidenceTempDir(context);
+    if (!tempError.isEmpty()) {
+        return { {}, {}, tempError };
+    }
+
+    const QString cacheKey = QStringLiteral("%1:%2:%3")
+        .arg(static_cast<qulonglong>(best.packageId))
+        .arg(static_cast<qulonglong>(best.resource->id))
+        .arg(fromUtf8(best.resource->path));
+    {
+        std::lock_guard lock(context->abcEvidenceMutex);
+        const auto cached = context->abcEvidenceFiles.find(cacheKey);
+        if (cached != context->abcEvidenceFiles.end()) {
+            if (QFileInfo::exists(cached->second)) {
+                return { best.displayPath, cached->second, {} };
+            }
+            context->abcEvidenceFiles.erase(cached);
+        }
+    }
+
+    LinkedStopToken linkedStop(context->stopToken(), stopToken);
+    auto content = hyle::async::sync_wait(
+        best.package->session.read_resource_async(
+            context->scheduler(),
+            best.resource->id,
+            linkedStop.token()));
+    if (!content) {
+        return { {}, {}, errorMessage("Read ABC resource failed", content.error()) };
+    }
+
+    const QString fileName = QStringLiteral("pkg%1_res%2_%3")
+        .arg(static_cast<qulonglong>(best.packageId))
+        .arg(static_cast<qulonglong>(best.resource->id))
+        .arg(sanitizedEvidenceFileName(fromUtf8(best.resource->path)));
+    const QString filePath = QDir(context->abcEvidenceTempDir->path()).filePath(fileName);
+    {
+        std::lock_guard lock(context->abcEvidenceMutex);
+        const auto cached = context->abcEvidenceFiles.find(cacheKey);
+        if (cached != context->abcEvidenceFiles.end() && QFileInfo::exists(cached->second)) {
+            return { best.displayPath, cached->second, {} };
+        }
+        const QString writeError = writeExtractedHap(filePath, content->bytes);
+        if (!writeError.isEmpty()) {
+            return { {}, {}, writeError };
+        }
+        context->abcEvidenceFiles[cacheKey] = filePath;
+    }
+
+    return { best.displayPath, filePath, {} };
+}
+
+QString formatAbcTargetHeader(const AbcEvidenceTarget& target)
+{
+    QString text;
+    text += QStringLiteral("# status: ok\n");
+    text += QStringLiteral("# abc: %1\n").arg(target.displayPath);
+    if (target.filePath != target.displayPath) {
+        text += QStringLiteral("# evidence_file: %1\n").arg(target.filePath);
+    }
+    return text;
+}
+
 } // namespace
 
 namespace HyleDecompiler {
@@ -1231,6 +1542,373 @@ bool isSourceFileCached(
         && packageContext->session.is_source_file_cached(hyleId, {});
 }
 
+QString readAbcLiteralEvidence(
+    const std::shared_ptr<SessionContext>& context,
+    const QString& fallbackPackagePath,
+    const QString& pathOrQuery,
+    const QString& offsetText,
+    int maxChars,
+    std::stop_token stopToken)
+{
+    PerformanceTrace trace(QStringLiteral("HyleDecompiler::readAbcLiteralEvidence"));
+
+    const auto offset = parseAbcOffset(offsetText);
+    if (!offset) {
+        return QStringLiteral(
+            "# status: error\n"
+            "# code: invalid_offset\n"
+            "# offset: %1\n"
+            "# message: Expected an offset like 0x5757 or literal@0x00005757.")
+            .arg(offsetText);
+    }
+
+    const auto target = resolveAbcEvidenceTarget(context, fallbackPackagePath, pathOrQuery, stopToken);
+    if (!target.error.isEmpty()) {
+        return QStringLiteral("# status: error\n# code: abc_not_found\n# message: %1").arg(target.error);
+    }
+
+    auto literal = hyle::hap::read_abc_literal(
+        std::filesystem::path(toUtf8Path(target.filePath)),
+        *offset);
+    if (!literal) {
+        return QStringLiteral(
+            "# status: error\n"
+            "# code: read_abc_literal_failed\n"
+            "# abc: %1\n"
+            "# offset: %2\n"
+            "# message: %3")
+            .arg(target.displayPath, hexOffset(*offset), fromUtf8(literal.error().message()));
+    }
+
+    QString text = formatAbcTargetHeader(target);
+    text += QStringLiteral("# literal_offset: %1\n").arg(hexOffset(literal->offset));
+    text += QStringLiteral("# kind: %1\n").arg(fromUtf8(literal->kind));
+    text += QStringLiteral("# size: %1\n").arg(literal->size);
+    if (!literal->raw.empty()) {
+        text += QStringLiteral("# raw_hex: %1\n").arg(rawHex(literal->raw));
+    }
+    text += QStringLiteral("\n");
+
+    if (literal->items.empty()) {
+        text += QStringLiteral("[literal has no decoded items]\n");
+    } else {
+        int index = 0;
+        for (const auto& item : literal->items) {
+            text += QStringLiteral("- item[%1]\n").arg(index++);
+            text += QStringLiteral("  offset: %1\n").arg(hexOffset(item.offset));
+            if (item.referenced_offset) {
+                text += QStringLiteral("  referenced_offset: %1\n").arg(hexOffset(*item.referenced_offset));
+            }
+            text += QStringLiteral("  type: %1\n").arg(fromUtf8(item.type));
+            if (!item.value.empty()) {
+                text += QStringLiteral("  value: %1\n").arg(quotedPreview(fromUtf8(item.value), 2000));
+            }
+            if (!item.raw.empty()) {
+                text += QStringLiteral("  raw_hex: %1\n").arg(rawHex(item.raw));
+            }
+        }
+    }
+    return boundedEvidenceText(text, maxChars);
+}
+
+QString searchAbcStringEvidence(
+    const std::shared_ptr<SessionContext>& context,
+    const QString& fallbackPackagePath,
+    const QString& pathOrQuery,
+    const QString& pattern,
+    int minLen,
+    int maxLen,
+    int limit,
+    int maxChars,
+    std::stop_token stopToken)
+{
+    PerformanceTrace trace(QStringLiteral("HyleDecompiler::searchAbcStringEvidence"));
+
+    const auto target = resolveAbcEvidenceTarget(context, fallbackPackagePath, pathOrQuery, stopToken);
+    if (!target.error.isEmpty()) {
+        return QStringLiteral("# status: error\n# code: abc_not_found\n# message: %1").arg(target.error);
+    }
+
+    hyle::hap::abc_string_search_options options;
+    options.min_len = static_cast<std::size_t>(std::max(1, minLen));
+    options.max_len = static_cast<std::size_t>(std::max(0, maxLen));
+    options.pattern = toUtf8Path(pattern);
+    options.limit = static_cast<std::size_t>(std::clamp(limit <= 0 ? 80 : limit, 1, 1000));
+    options.printable_only = true;
+
+    auto matches = hyle::hap::search_abc_strings(
+        std::filesystem::path(toUtf8Path(target.filePath)),
+        options);
+    if (!matches) {
+        return QStringLiteral(
+            "# status: error\n"
+            "# code: search_abc_strings_failed\n"
+            "# abc: %1\n"
+            "# message: %2")
+            .arg(target.displayPath, fromUtf8(matches.error().message()));
+    }
+
+    QString text = formatAbcTargetHeader(target);
+    text += QStringLiteral("# match_count: %1\n").arg(static_cast<qulonglong>(matches->size()));
+    text += QStringLiteral("# min_len: %1\n").arg(options.min_len);
+    text += QStringLiteral("# max_len: %1\n").arg(options.max_len);
+    if (!pattern.isEmpty()) {
+        text += QStringLiteral("# pattern: %1\n").arg(pattern);
+    }
+    text += QStringLiteral("\n");
+
+    int index = 0;
+    for (const auto& match : *matches) {
+        text += QStringLiteral("- match[%1]\n").arg(index++);
+        text += QStringLiteral("  offset: %1\n").arg(hexOffset(match.offset));
+        if (match.container_offset) {
+            text += QStringLiteral("  container_offset: %1\n").arg(hexOffset(*match.container_offset));
+        }
+        if (match.item_offset) {
+            text += QStringLiteral("  item_offset: %1\n").arg(hexOffset(*match.item_offset));
+        }
+        text += QStringLiteral("  type: %1\n").arg(fromUtf8(match.type));
+        text += QStringLiteral("  length: %1\n").arg(static_cast<qulonglong>(match.length));
+        if (!match.classification.empty()) {
+            text += QStringLiteral("  classification: %1\n").arg(fromUtf8(match.classification));
+        }
+        if (!match.context.empty()) {
+            text += QStringLiteral("  context: %1\n").arg(fromUtf8(match.context));
+        }
+        text += QStringLiteral("  value: %1\n").arg(quotedPreview(fromUtf8(match.value), 2000));
+    }
+    if (matches->empty()) {
+        text += QStringLiteral("[no ABC strings matched]\n");
+    }
+    return boundedEvidenceText(text, maxChars);
+}
+
+QString readAbcTreeEvidence(
+    const std::shared_ptr<SessionContext>& context,
+    const QString& fallbackPackagePath,
+    const QString& pathOrQuery,
+    int limit,
+    int maxChars,
+    std::stop_token stopToken)
+{
+    PerformanceTrace trace(QStringLiteral("HyleDecompiler::readAbcTreeEvidence"));
+
+    const auto target = resolveAbcEvidenceTarget(context, fallbackPackagePath, pathOrQuery, stopToken);
+    if (!target.error.isEmpty()) {
+        return QStringLiteral("# status: error\n# code: abc_not_found\n# message: %1").arg(target.error);
+    }
+
+    auto tree = hyle::hap::read_abc_tree(std::filesystem::path(toUtf8Path(target.filePath)));
+    if (!tree) {
+        return QStringLiteral(
+            "# status: error\n"
+            "# code: read_abc_tree_failed\n"
+            "# abc: %1\n"
+            "# message: %2")
+            .arg(target.displayPath, fromUtf8(tree.error().message()));
+    }
+
+    const int maxClasses = std::clamp(limit <= 0 ? 80 : limit, 1, 1000);
+    QString text = formatAbcTargetHeader(target);
+    text += QStringLiteral("# classes: %1\n").arg(static_cast<qulonglong>(tree->class_count));
+    text += QStringLiteral("# methods: %1\n").arg(static_cast<qulonglong>(tree->method_count));
+    text += QStringLiteral("# fields: %1\n").arg(static_cast<qulonglong>(tree->field_count));
+    text += QStringLiteral("# code_items: %1\n").arg(static_cast<qulonglong>(tree->code_count));
+    text += QStringLiteral("# strings: %1\n").arg(static_cast<qulonglong>(tree->string_count));
+    text += QStringLiteral("# literals: %1\n\n").arg(static_cast<qulonglong>(tree->literal_count));
+
+    int classIndex = 0;
+    for (const auto& klass : tree->classes) {
+        if (classIndex >= maxClasses) {
+            text += QStringLiteral("[truncated: %1 of %2 classes shown]\n")
+                .arg(maxClasses)
+                .arg(static_cast<qulonglong>(tree->classes.size()));
+            break;
+        }
+        ++classIndex;
+        text += QStringLiteral("- class %1 @%2\n")
+            .arg(fromUtf8(klass.name), hexOffset(klass.offset));
+        if (!klass.source_file.empty()) {
+            text += QStringLiteral("  source_file: %1\n").arg(fromUtf8(klass.source_file));
+        }
+        for (const auto& field : klass.fields) {
+            text += QStringLiteral("  - field %1 @%2 type=%3\n")
+                .arg(fromUtf8(field.name), hexOffset(field.offset), fromUtf8(field.type_name));
+        }
+        for (const auto& method : klass.methods) {
+            text += QStringLiteral("  - method %1 @%2")
+                .arg(fromUtf8(method.name), hexOffset(method.offset));
+            if (method.code_offset) {
+                text += QStringLiteral(" code=%1").arg(hexOffset(*method.code_offset));
+            }
+            text += QStringLiteral(" args=%1 vregs=%2 refs=%3\n")
+                .arg(method.num_args)
+                .arg(method.num_vregs)
+                .arg(static_cast<qulonglong>(method.reference_count));
+        }
+    }
+    return boundedEvidenceText(text, maxChars);
+}
+
+QString findAbcXrefEvidence(
+    const std::shared_ptr<SessionContext>& context,
+    const QString& fallbackPackagePath,
+    const QString& pathOrQuery,
+    const QString& query,
+    const QString& kind,
+    int limit,
+    int maxChars,
+    std::stop_token stopToken)
+{
+    PerformanceTrace trace(QStringLiteral("HyleDecompiler::findAbcXrefEvidence"));
+
+    const auto target = resolveAbcEvidenceTarget(context, fallbackPackagePath, pathOrQuery, stopToken);
+    if (!target.error.isEmpty()) {
+        return QStringLiteral("# status: error\n# code: abc_not_found\n# message: %1").arg(target.error);
+    }
+
+    hyle::hap::abc_xref_query xrefQuery;
+    xrefQuery.kind = parseBytecodeReferenceKind(kind);
+    if (!kind.trimmed().isEmpty() && kind.trimmed().compare(QStringLiteral("any"), Qt::CaseInsensitive) != 0
+        && !xrefQuery.kind) {
+        return QStringLiteral("# status: error\n# code: invalid_kind\n# message: kind must be string, method, literal, or any.");
+    }
+    xrefQuery.substring = true;
+    if (const auto offset = parseAbcOffset(query)) {
+        xrefQuery.target_offset = *offset;
+    } else {
+        xrefQuery.target_text = toUtf8Path(query);
+    }
+
+    auto xrefs = hyle::hap::find_abc_xrefs(
+        std::filesystem::path(toUtf8Path(target.filePath)),
+        xrefQuery);
+    if (!xrefs) {
+        return QStringLiteral(
+            "# status: error\n"
+            "# code: find_abc_xrefs_failed\n"
+            "# abc: %1\n"
+            "# message: %2")
+            .arg(target.displayPath, fromUtf8(xrefs.error().message()));
+    }
+
+    const int maxItems = std::clamp(limit <= 0 ? 80 : limit, 1, 1000);
+    QString text = formatAbcTargetHeader(target);
+    text += QStringLiteral("# query: %1\n").arg(query);
+    if (!kind.trimmed().isEmpty()) {
+        text += QStringLiteral("# kind: %1\n").arg(kind);
+    }
+    text += QStringLiteral("# match_count: %1\n\n").arg(static_cast<qulonglong>(xrefs->size()));
+
+    int index = 0;
+    for (const auto& xref : *xrefs) {
+        if (index >= maxItems) {
+            text += QStringLiteral("[truncated: %1 of %2 xrefs shown]\n")
+                .arg(maxItems)
+                .arg(static_cast<qulonglong>(xrefs->size()));
+            break;
+        }
+        text += QStringLiteral("- xref[%1]\n").arg(index++);
+        text += QStringLiteral("  kind: %1\n").arg(bytecodeReferenceKindName(xref.kind));
+        text += QStringLiteral("  target_offset: %1\n").arg(hexOffset(xref.target_offset));
+        if (!xref.target_text.empty()) {
+            text += QStringLiteral("  target_text: %1\n").arg(quotedPreview(fromUtf8(xref.target_text), 1000));
+        }
+        text += QStringLiteral("  class: %1 @%2\n").arg(fromUtf8(xref.class_name), hexOffset(xref.class_offset));
+        text += QStringLiteral("  method: %1 @%2\n").arg(fromUtf8(xref.method_name), hexOffset(xref.method_offset));
+        text += QStringLiteral("  code_offset: %1\n").arg(hexOffset(xref.code_offset));
+        text += QStringLiteral("  instruction_offset: %1\n").arg(hexOffset(xref.instruction_offset));
+        text += QStringLiteral("  operand_index: %1\n").arg(xref.index);
+    }
+    if (xrefs->empty()) {
+        text += QStringLiteral("[no ABC xrefs matched]\n");
+    }
+    return boundedEvidenceText(text, maxChars);
+}
+
+QString findAbcCallArgumentFlowEvidence(
+    const std::shared_ptr<SessionContext>& context,
+    const QString& fallbackPackagePath,
+    const QString& pathOrQuery,
+    const QString& query,
+    const QString& kind,
+    int limit,
+    int maxChars,
+    std::stop_token stopToken)
+{
+    PerformanceTrace trace(QStringLiteral("HyleDecompiler::findAbcCallArgumentFlowEvidence"));
+
+    const auto target = resolveAbcEvidenceTarget(context, fallbackPackagePath, pathOrQuery, stopToken);
+    if (!target.error.isEmpty()) {
+        return QStringLiteral("# status: error\n# code: abc_not_found\n# message: %1").arg(target.error);
+    }
+
+    hyle::hap::abc_call_argument_flow_query flowQuery;
+    flowQuery.kind = parseBytecodeReferenceKind(kind);
+    if (!kind.trimmed().isEmpty() && kind.trimmed().compare(QStringLiteral("any"), Qt::CaseInsensitive) != 0
+        && !flowQuery.kind) {
+        return QStringLiteral("# status: error\n# code: invalid_kind\n# message: kind must be string, method, literal, or any.");
+    }
+    flowQuery.substring = true;
+    flowQuery.include_this_argument = true;
+    if (const auto offset = parseAbcOffset(query)) {
+        flowQuery.target_offset = *offset;
+    } else {
+        flowQuery.target_text = toUtf8Path(query);
+    }
+
+    auto flows = hyle::hap::find_abc_call_argument_flows(
+        std::filesystem::path(toUtf8Path(target.filePath)),
+        flowQuery);
+    if (!flows) {
+        return QStringLiteral(
+            "# status: error\n"
+            "# code: find_abc_call_argument_flows_failed\n"
+            "# abc: %1\n"
+            "# message: %2")
+            .arg(target.displayPath, fromUtf8(flows.error().message()));
+    }
+
+    const int maxItems = std::clamp(limit <= 0 ? 80 : limit, 1, 1000);
+    QString text = formatAbcTargetHeader(target);
+    text += QStringLiteral("# query: %1\n").arg(query);
+    if (!kind.trimmed().isEmpty()) {
+        text += QStringLiteral("# kind: %1\n").arg(kind);
+    }
+    text += QStringLiteral("# note: conservative bytecode evidence; semantic interpretation belongs to the Agent.\n");
+    text += QStringLiteral("# match_count: %1\n\n").arg(static_cast<qulonglong>(flows->size()));
+
+    int index = 0;
+    for (const auto& flow : *flows) {
+        if (index >= maxItems) {
+            text += QStringLiteral("[truncated: %1 of %2 flows shown]\n")
+                .arg(maxItems)
+                .arg(static_cast<qulonglong>(flows->size()));
+            break;
+        }
+        text += QStringLiteral("- flow[%1]\n").arg(index++);
+        text += QStringLiteral("  kind: %1\n").arg(bytecodeReferenceKindName(flow.kind));
+        text += QStringLiteral("  target_offset: %1\n").arg(hexOffset(flow.target_offset));
+        if (!flow.target_text.empty()) {
+            text += QStringLiteral("  target_text: %1\n").arg(quotedPreview(fromUtf8(flow.target_text), 1000));
+        }
+        text += QStringLiteral("  class: %1 @%2\n").arg(fromUtf8(flow.class_name), hexOffset(flow.class_offset));
+        text += QStringLiteral("  method: %1 @%2\n").arg(fromUtf8(flow.method_name), hexOffset(flow.method_offset));
+        text += QStringLiteral("  code_offset: %1\n").arg(hexOffset(flow.code_offset));
+        text += QStringLiteral("  source_instruction: %1\n").arg(hexOffset(flow.source_instruction_offset));
+        if (flow.source_register) {
+            text += QStringLiteral("  source_register: v%1\n").arg(*flow.source_register);
+        }
+        text += QStringLiteral("  call_instruction: %1\n").arg(hexOffset(flow.call_instruction_offset));
+        text += QStringLiteral("  argument_index: %1\n").arg(flow.argument_index);
+        text += QStringLiteral("  receiver: %1\n").arg(boolText(flow.this_argument));
+    }
+    if (flows->empty()) {
+        text += QStringLiteral("[no ABC call argument flows matched]\n");
+    }
+    return boundedEvidenceText(text, maxChars);
+}
+
 DisassemblyResult disassembleSourceFileText(
     const std::shared_ptr<SessionContext>& context,
     int nodeIndex,
@@ -1252,11 +1930,16 @@ DisassemblyResult disassembleSourceFileText(
     }
 
     LinkedStopToken linkedStop(context->stopToken(), stopToken);
+    const std::string sourceName = toUtf8Path(name);
+    hyle::hap::abc_disassembly_format_options options;
+    options.source_name = sourceName;
+    options.resolve_literals = true;
+    options.literal_preview_limit = 160;
     auto text = hyle::async::sync_wait(
         packageContext->session.disassemble_source_file_text_async(
             context->scheduler(),
             sourceFileId,
-            {},
+            options,
             linkedStop.token()));
     if (!text) {
         result.error = errorMessage("Disassemble failed", text.error());

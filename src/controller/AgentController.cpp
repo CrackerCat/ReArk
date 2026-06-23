@@ -100,6 +100,21 @@ QString toolDisplayName(const std::string& name)
     if (name == "read_disassembly") {
         return AgentController::tr("source-file disassembly");
     }
+    if (name == "read_abc_literal") {
+        return AgentController::tr("ABC literal");
+    }
+    if (name == "search_abc_strings") {
+        return AgentController::tr("ABC strings");
+    }
+    if (name == "read_abc_tree") {
+        return AgentController::tr("ABC tree");
+    }
+    if (name == "find_abc_xrefs") {
+        return AgentController::tr("ABC cross-references");
+    }
+    if (name == "find_abc_call_argument_flows") {
+        return AgentController::tr("ABC call argument flows");
+    }
     if (name == "inspect_entry_points") {
         return AgentController::tr("entry points");
     }
@@ -936,6 +951,223 @@ struct read_disassembly {
     }
 };
 
+struct read_abc_literal {
+    static constexpr std::string_view description =
+        "Resolve an ABC literal offset such as literal@0x00005757 to decoded strings, array items, and raw evidence from the current ReArk target.";
+
+    wuwe::field<std::string> offset {
+        .description = "ABC literal offset, for example 0x5757 or literal@0x00005757."
+    };
+    wuwe::field<std::string> path_or_query {
+        .default_value = "modules.abc",
+        .description = "ABC file path or query. Use modules.abc for the primary HarmonyOS bytecode file."
+    };
+    wuwe::field<int> max_chars {
+        .default_value = 12000,
+        .description = "Maximum number of evidence characters to return."
+    };
+
+    wuwe::llm_tool_result invoke(const ReArkToolContext& context) const
+    {
+        if (auto cancelled = cancelledToolResult(context)) {
+            return *cancelled;
+        }
+        if (!context.snapshot) {
+            return { .content = "No active ReArk analysis snapshot." };
+        }
+        return {
+            .content = toStdString(HyleDecompiler::readAbcLiteralEvidence(
+                context.snapshot->packageContext,
+                context.snapshot->packagePath,
+                QString::fromStdString(path_or_query.value),
+                QString::fromStdString(offset.value),
+                max_chars.value,
+                context.stopToken))
+        };
+    }
+};
+
+struct search_abc_strings {
+    static constexpr std::string_view description =
+        "Search decoded ABC literal strings, including string items inside array literals, with optional regex filtering.";
+
+    wuwe::field<std::string> path_or_query {
+        .default_value = "modules.abc",
+        .description = "ABC file path or query. Use modules.abc for the primary HarmonyOS bytecode file."
+    };
+    wuwe::field<std::string> pattern {
+        .default_value = std::string {},
+        .description = "Optional regex pattern, for example [0-9a-f]{64} for SHA-256-like hashes."
+    };
+    wuwe::field<int> min_len {
+        .default_value = 4,
+        .description = "Minimum string length."
+    };
+    wuwe::field<int> max_len {
+        .default_value = 0,
+        .description = "Maximum string length, or 0 for unlimited."
+    };
+    wuwe::field<int> limit {
+        .default_value = 80,
+        .description = "Maximum number of string matches."
+    };
+    wuwe::field<int> max_chars {
+        .default_value = 24000,
+        .description = "Maximum number of evidence characters to return."
+    };
+
+    wuwe::llm_tool_result invoke(const ReArkToolContext& context) const
+    {
+        if (auto cancelled = cancelledToolResult(context)) {
+            return *cancelled;
+        }
+        if (!context.snapshot) {
+            return { .content = "No active ReArk analysis snapshot." };
+        }
+        return {
+            .content = toStdString(HyleDecompiler::searchAbcStringEvidence(
+                context.snapshot->packageContext,
+                context.snapshot->packagePath,
+                QString::fromStdString(path_or_query.value),
+                QString::fromStdString(pattern.value),
+                min_len.value,
+                max_len.value,
+                limit.value,
+                max_chars.value,
+                context.stopToken))
+        };
+    }
+};
+
+struct read_abc_tree {
+    static constexpr std::string_view description =
+        "Read the structured ABC class, method, field, code, string, and literal tree from the current ReArk target.";
+
+    wuwe::field<std::string> path_or_query {
+        .default_value = "modules.abc",
+        .description = "ABC file path or query."
+    };
+    wuwe::field<int> limit {
+        .default_value = 80,
+        .description = "Maximum number of classes to list."
+    };
+    wuwe::field<int> max_chars {
+        .default_value = 24000,
+        .description = "Maximum number of evidence characters to return."
+    };
+
+    wuwe::llm_tool_result invoke(const ReArkToolContext& context) const
+    {
+        if (auto cancelled = cancelledToolResult(context)) {
+            return *cancelled;
+        }
+        if (!context.snapshot) {
+            return { .content = "No active ReArk analysis snapshot." };
+        }
+        return {
+            .content = toStdString(HyleDecompiler::readAbcTreeEvidence(
+                context.snapshot->packageContext,
+                context.snapshot->packagePath,
+                QString::fromStdString(path_or_query.value),
+                limit.value,
+                max_chars.value,
+                context.stopToken))
+        };
+    }
+};
+
+struct find_abc_xrefs {
+    static constexpr std::string_view description =
+        "Find structured ABC bytecode cross-references to a string, method, or literal offset.";
+
+    wuwe::field<std::string> query {
+        .description = "String/method text to search, or an offset such as 0x5757."
+    };
+    wuwe::field<std::string> path_or_query {
+        .default_value = "modules.abc",
+        .description = "ABC file path or query."
+    };
+    wuwe::field<std::string> kind {
+        .default_value = "any",
+        .description = "Reference kind: any, string, method, or literal."
+    };
+    wuwe::field<int> limit {
+        .default_value = 80,
+        .description = "Maximum number of xrefs to list."
+    };
+    wuwe::field<int> max_chars {
+        .default_value = 24000,
+        .description = "Maximum number of evidence characters to return."
+    };
+
+    wuwe::llm_tool_result invoke(const ReArkToolContext& context) const
+    {
+        if (auto cancelled = cancelledToolResult(context)) {
+            return *cancelled;
+        }
+        if (!context.snapshot) {
+            return { .content = "No active ReArk analysis snapshot." };
+        }
+        return {
+            .content = toStdString(HyleDecompiler::findAbcXrefEvidence(
+                context.snapshot->packageContext,
+                context.snapshot->packagePath,
+                QString::fromStdString(path_or_query.value),
+                QString::fromStdString(query.value),
+                QString::fromStdString(kind.value),
+                limit.value,
+                max_chars.value,
+                context.stopToken))
+        };
+    }
+};
+
+struct find_abc_call_argument_flows {
+    static constexpr std::string_view description =
+        "Find conservative ABC evidence that a string/literal/method reference flows into a call argument.";
+
+    wuwe::field<std::string> query {
+        .description = "String/method text to search, or an offset such as 0x5757."
+    };
+    wuwe::field<std::string> path_or_query {
+        .default_value = "modules.abc",
+        .description = "ABC file path or query."
+    };
+    wuwe::field<std::string> kind {
+        .default_value = "any",
+        .description = "Reference kind: any, string, method, or literal."
+    };
+    wuwe::field<int> limit {
+        .default_value = 80,
+        .description = "Maximum number of flows to list."
+    };
+    wuwe::field<int> max_chars {
+        .default_value = 24000,
+        .description = "Maximum number of evidence characters to return."
+    };
+
+    wuwe::llm_tool_result invoke(const ReArkToolContext& context) const
+    {
+        if (auto cancelled = cancelledToolResult(context)) {
+            return *cancelled;
+        }
+        if (!context.snapshot) {
+            return { .content = "No active ReArk analysis snapshot." };
+        }
+        return {
+            .content = toStdString(HyleDecompiler::findAbcCallArgumentFlowEvidence(
+                context.snapshot->packageContext,
+                context.snapshot->packagePath,
+                QString::fromStdString(path_or_query.value),
+                QString::fromStdString(query.value),
+                QString::fromStdString(kind.value),
+                limit.value,
+                max_chars.value,
+                context.stopToken))
+        };
+    }
+};
+
 struct inspect_entry_points {
     static constexpr std::string_view description =
         "List likely entry points, descriptors, summary, signature, pages, and important files.";
@@ -987,6 +1219,11 @@ public:
         registerTool<search_loaded_content>();
         registerTool<read_source>();
         registerTool<read_disassembly>();
+        registerTool<read_abc_literal>();
+        registerTool<search_abc_strings>();
+        registerTool<read_abc_tree>();
+        registerTool<find_abc_xrefs>();
+        registerTool<find_abc_call_argument_flows>();
         registerTool<inspect_entry_points>();
         registerTool<explain_signature>();
     }
@@ -1373,11 +1610,11 @@ wuwe::agent::reasoning::reasoning_policy rearkReasoningPolicy(const std::string&
         .has_tools = true,
         .requires_tools = false
     });
-    policy.budget.max_model_calls = 48;
-    policy.budget.max_tool_calls = 120;
-    policy.budget.max_tool_rounds = 32;
-    policy.budget.max_steps = 64;
-    policy.budget.timeout = std::chrono::milliseconds { 900000 };
+    policy.budget.max_model_calls = 144;
+    policy.budget.max_tool_calls = 360;
+    policy.budget.max_tool_rounds = 96;
+    policy.budget.max_steps = 192;
+    policy.budget.timeout = std::chrono::milliseconds { 2700000 };
     return policy;
 }
 #endif
@@ -1580,6 +1817,8 @@ void AgentController::ask(const QString& question)
     QString systemPrompt =
         QStringLiteral("You are an expert HarmonyOS NEXT application reverse engineering assistant embedded in ReArk. "
             "Use ReArk tools when you need package, source, disassembly, resource, signature, or entry-point data, "
+            "When ABC disassembly references literal@0x... values, resolve them with ABC literal evidence instead of guessing from text. "
+            "For hardcoded credentials, hashes, crypto constants, or call-argument questions, prefer structured ABC string, xref, and call-flow evidence when available. "
             "but do not keep calling tools after you have enough evidence to answer. "
             "For overview questions such as app purpose, features, entry points, pages, permissions, or architecture, "
             "first use the current snapshot, important files, and entry-point list below, then call only the tools that are truly needed. "

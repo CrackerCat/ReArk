@@ -178,6 +178,37 @@ Rectangle {
         spacing: 16
         boundsBehavior: Flickable.StopAtBounds
         cacheBuffer: 1200
+        ScrollBar.vertical: ScrollBar {
+            id: chatScrollBar
+
+            parent: chatList
+            x: Math.min(
+                chatList.width - width - 12,
+                Math.max(4, (chatList.width + root.contentWidth) / 2 + 10))
+            y: 0
+            height: chatList.height
+            policy: chatList.contentHeight > chatList.height
+                    ? ScrollBar.AsNeeded
+                    : ScrollBar.AlwaysOff
+            width: 8
+            rightPadding: 2
+            contentItem: Rectangle {
+                implicitWidth: 5
+                radius: 2.5
+                color: root.darkTheme ? "#747b85" : "#9aa6b2"
+                opacity: chatList.moving || chatList.flicking || chatScrollBar.pressed || chatScrollBar.hovered
+                         ? 0.86
+                         : 0.5
+            }
+            background: Rectangle {
+                implicitWidth: 8
+                radius: 4
+                color: root.darkTheme ? "#25282d" : "#dbe3ee"
+                opacity: chatList.moving || chatList.flicking || chatScrollBar.pressed || chatScrollBar.hovered
+                         ? 0.38
+                         : 0.18
+            }
+        }
 
         header: Item {
             width: chatList.width
