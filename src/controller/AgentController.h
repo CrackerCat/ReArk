@@ -64,13 +64,21 @@ private:
     void queueAssistantDelta(const QString& text);
     void flushPendingAssistantDelta();
     void appendToActiveAssistantMessage(const QString& text);
+    void recordActiveAssistantActivity(
+        const QString& type,
+        const QString& title,
+        const QString& detail = {},
+        const QString& state = {});
     void finishActiveAssistantMessage(const QString& fallbackText = {});
+    void finishInterruptedAssistantMessage(const QString& notice);
     void failActiveAssistantMessage();
     void rebuildTranscript();
     void appendTranscript(const QString& text);
     void setErrorMessage(const QString& errorMessage);
     void setStatus(const QString& status);
     void resetRun();
+    void cancelCurrentRun(bool clearPendingQuestion);
+    void startPendingQuestion();
     [[nodiscard]] QString unavailableMessage() const;
 
     DecompilerController* decompilerController_ = nullptr;
@@ -84,6 +92,7 @@ private:
     QString pendingAssistantDelta_;
     QTimer* assistantDeltaTimer_ = nullptr;
     int activeAssistantMessage_ = -1;
+    QString pendingQuestion_;
     bool running_ = false;
 };
 
